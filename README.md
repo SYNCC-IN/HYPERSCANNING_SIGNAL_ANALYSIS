@@ -14,3 +14,5 @@ These experiments consist of three major parts: SECORE, passive MOVIE viewing, a
 The exemplary processing 'scripts warsaw_pilot_data.py' and 'warsaw_pilot_data_with_ICA.py' require that in your local repo there is a folder 'DATA' containing exemplary diade data 'W_010'
 
 We hope that they can be adapted to the paradigms of other Partners.
+
+[See full specification](docs/data_structure_spec.md)
