@@ -6,7 +6,7 @@
 **Author:** Joanna Duda-Goławska
 
 
-This document defines the unified **Python data structure** for handling multimodal infant-caregiver data recorded with:
+This document defines the unified **Python data structure** for handling multimodal child-caregiver data recorded with:
 - EEG (electroencephalography),
 - ET (eye-tracking),
 - IBI (inter-beat interval, derived from ECG).
@@ -91,4 +91,3 @@ data = {
 
     "notes": str or None,    # notes from experiment
 }
----
