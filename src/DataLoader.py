@@ -256,13 +256,16 @@ class DataLoader:
         return filtered_data
     @staticmethod
     def load_output_data(filename):
-        results = joblib.load(filename)
-        for key, val in results.items():
-            if isinstance(val, np.ndarray):
-                print(f"{key}: {val.shape}")
-            else:
-                print(f"{key}: {val}")
-        return results
+        try:
+            results = joblib.load(filename)
+            for key, val in results.items():
+                if isinstance(val, np.ndarray):
+                    print(f"{key}: {val.shape}")
+                else:
+                    print(f"{key}: {val}")
+            return results
+        except FileNotFoundError:
+            print(f"File not found {filename}")
     def _save_to_file(self):
         joblib.dump(self.output,self.output_dir+f"{self.ID}.joblib")
     # method for load Warsaw_Data_Frame.csv
