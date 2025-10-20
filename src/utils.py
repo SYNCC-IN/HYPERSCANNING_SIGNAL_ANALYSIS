@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 
-
+# przeniesiona do DataLoader
 def load_warsaw_pilot_data(folder, file, plot=False):   
 
     with open(os.path.join(folder, f"{file}.xml")) as fd:
@@ -32,14 +32,14 @@ def load_warsaw_pilot_data(folder, file, plot=False):
         ax[1].plot(ECG_CG, label='Caregiver ECG')
         plt.legend()
         plt.show()
-
-    return {
+    output = {
             'data': data,
             'Fs_EEG': Fs_EEG,
             'ChanNames': ChanNames,
             'channels': channels
-        }   
-
+        }
+    return output
+# przeniesiona do DataLoader
 def scan_for_events(data, threshold= 20000,plot = True):
     '''Scan for events in the diode signal and plot them if required.
     Args:
@@ -79,7 +79,7 @@ def scan_for_events(data, threshold= 20000,plot = True):
         plt.plot(up, 'g', label='Up Events')
         plt.plot(down, 'm', label='Down Events')
         plt.legend()
-    
+
     dt = 17 #ms between frames
     i = 0
     while i< len(down):
@@ -116,15 +116,15 @@ def scan_for_events(data, threshold= 20000,plot = True):
                         plt.plot(x, 'b'), plt.plot(i,x[i],'co')
                     i += int(2.5*Fs_EEG)
                 else:
-                    print(f"Talk 2 starts at {i/Fs_EEG:.2f} seconds") 
+                    print(f"Talk 2 starts at {i/Fs_EEG:.2f} seconds")
                     events['Talk_2'] = i /Fs_EEG
                     if plot:
-                        plt.plot(x, 'b'), plt.plot(i,x[i],'mo')   
+                        plt.plot(x, 'b'), plt.plot(i,x[i],'mo')
                         plt.show()
-                    i = len(down)       # talk 2 is the last event so finish scaning for events        
+                    i = len(down)       # talk 2 is the last event so finish scaning for events
         i += 1
     return events
-
+# przeniesiona do DataLoader
 def interpolate_IBI_signals(ECG, Fs_ECG, Fs_IBI=4, plot=False, label = ''):
     # Extract R-peaks location
     _, info_ECG= nk.ecg_process(ECG, sampling_rate=Fs_ECG, method='neurokit')

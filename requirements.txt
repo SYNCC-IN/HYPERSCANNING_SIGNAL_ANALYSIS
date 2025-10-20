@@ -1,0 +1,9 @@
+numpy
+os
+xmltodict
+matplotlib
+scipy
+neurokit2
+plotly
+joblib
+
