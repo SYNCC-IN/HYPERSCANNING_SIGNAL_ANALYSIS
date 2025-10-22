@@ -12,129 +12,187 @@ import joblib
 
 class DataLoader:
 
-    def __init__(self, ID, folder_EEG = None, folder_H10 = None, folder_ET = None, output_dir = None, plot_flag = False):
+    def __init__(self, ID):
+        '''DataLoader class for loading and processing Warsaw pilot data.
+        The constructor initializes the DataLoader with the given ID and an empty list of possible modalities.
+        The data related to the modalities will be added by setter methods.
+        Retrieving the data will be done by getter methods.
+            '''
+        
         self.ID = ID
-        self.output_dir = output_dir
-        self.folder_EEG = folder_EEG
-        self.folder_H10 = folder_H10
-        self.folder_ET = folder_ET
-        self.plot_flag = plot_flag
-        self.data = self._load_warsaw_pilot_data(folder = self.folder_EEG,file=self.ID)
-        self.output = self._filter_warsaw_pilot_data(self.data)
-        self._save_to_file()
-    def _filter_warsaw_pilot_data(self,data, lowcut=4.0, highcut=40.0, q=8):
+        self.modalities = [] # list of modalities already loaded: 'EEG', 'H10', 'ET'
+        self.folder ={}
+        self.FS ={}
+        self.data = {}
 
-        '''Filter the Warsaw pilot data using a low, high pas and notch filter.
-            And apply montage to M1 and M2 channels for EEG data.
-            EEG data is decimated by q times to reduce the sampling frequency.
-            The ECG data is filtered using a high pass filter and notch filter. And the ECG channels are mounted L-R
+
+
+        
+        #self.data = self._load_warsaw_pilot_data(folder = self.folder_EEG, file=self.ID)
+        #self.output = self._filter_warsaw_pilot_data(self.data)
+        #self._save_to_file()
+
+    def _set_EEG_data(self, folder_EEG, debug_flag=False):
+        '''Set the EEG data for the DataLoader instance by loading and filtering the Warsaw pilot data.
+        We assume data were recorded as multiplexed signals in SVAROG system format.
+        We also assume specific channel names for child and caregiver EEG data, as specified below.
         Args:
-            data (dictionry): {
-                                'data': data,
-                                'Fs_EEG': Fs_EEG,
-                                'ChanNames': ChanNames,
-                                'channels': channels
-                                }
-            lowcut (float): The low cutoff frequency for the bandpass filter.
-            highcut (float): The high cutoff frequency for the bandpass filter.
-            q: decimation of the EEG data
-        Returns:
-            filtered_data (dict): Filtered data with the structure:
-            {
-                "ID": str,                        # Dyad ID
-                "data_EEG": np.ndarray,           # EEG data [n_channels x n_samples]
-                "Fs_EEG": float,                  # EEG sampling rate (Hz)
-                "times_EEG": np.ndarray,          # time vector (s) [1 x n_samples]
-                "chanNames_EEG": list[str],       # list of channel names in order
-                "channels_EEG": dict[str, int],   # mapping: channel name → index in 'data'
-
-                "references": str,                # Information about reference electrodes or common average
-
-                "filtration": {                   # Information about filtering
-                    "notch": bool,                # If True, notch filter applied
-                    "low_pass": float,            # Low-pass filter cutoff frequency (Hz)
-                    "high_pass": float,           # High-pass filter cutoff frequency (Hz)
-                    "type": str                   # Type of filter (e.g., 'FIR', 'IIR')
-                }
-
-                'EEG_channels_ch': list[str],     # child EEG channels after montage
-                'EEG_channels_cg': list[str],     # caregiver EEG channels after montage
-
-                'ECG_ch': np.ndarray,             # filtered ECG (child)
-                'ECG_cg': np.ndarray,             # filtered ECG (caregiver)
-                'Fs_ECG': int,                    # ECG sampling frequency
-                't_ECG': np.ndarray,              # time vector for ECG
-
-                'IBI_ch_interp': np.ndarray,      # interpolated IBI (child)
-                'IBI_cg_interp': np.ndarray,      # interpolated IBI (caregiver)
-                'Fs_IBI': int,                    # IBI sampling frequency (default: 4 Hz)
-                't_IBI': np.ndarray               # time vector for interpolated IBI
-
-                'ET_ch: np.ndarray,               # ET (child)
-                'ET_cg': np.ndarray,              # ET (caregiver)
-                'Fs_ET': int,                     # ET sampling frequency
-                't_ET': np.ndarray                # time vector for interpolated IBI
-
-                "event": list,                    # list of event markers (stimuli, triggers, etc.)
-                "epoch": list or None,            #
-
-                "paths": {
-                    "directory_EEG": str,         # path to EEG data raw
-                    "directory_ET": str,          # path to eye-tracking files
-                    "directory_HRV": str,         # path to HRV -> IBI files
-                    "output_dir": str,            # path where to save results/figures
-                },
-
-               "tasks": {
-                    "dual_HRV": {
-                        "SECORE": bool,           # True if active HRV during SECORE was recorded
-                        "movies": bool,           # True if passive HRV recorded
-                        "conversation": bool      # True if active HRV recorded
-                    },
-                    "dual_EEG": {
-                        "movies": bool,           # True if passive EEG recorded
-                        "conversation": bool,     # True if active EEG recorded
-                    }
-                    "dual_ET": {
-                        "movies": bool,           # True if passive ET recorded
-                        "conversation": bool      # True if active ET recorded
-                    }
-                }
-
-               "child_info": {                    # Information about child
-                    "birth_date": datetime.date,  # Child birth date
-                    "age_years": int,             # Child age in months at the time of recording
-                    "age_months": int,            # Child age in months at the time of recording
-                    "age_days": int,              # Additional days beyond months
-                    "rec_date: datetime.date,     # Date when recording was done
-                    "group": str,                 # Child group: 'T' (Typical),  'ASD' (Autism Spectrum Disorder), 'P' (Premature)
-                    "sex": str                    # Child sex: 'M' (male), 'F' (female)
-                }
-
-                "notes": str or None,    # notes from experiment
-            }
+            folder_EEG (str): Path to the folder containing the EEG data files.
+            debug_flag (bool): Whether to plot intermediate results for debugging/visualization.
         '''
-        signal = data['data'].copy()
-        signal *= 0.0715  # scale the signal to microvolts
-        Fs_EEG = data['Fs_EEG']
-        Fs_ECG = Fs_EEG  # ECG data is sampled at the same frequency as EEG data
-        Fs_IBI = 4  # sampling frequency [Hz] for the IBI signals
-        t_ECG = np.arange(0, signal.shape[1] / Fs_EEG, 1 / Fs_EEG)  # time vector for the ECG data
+        self.folder['EEG'] = folder_EEG
+        # define EEG channels for child and caregiver
+        self.channel_names['EEG_ch'] = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'M1', 'T3', 'C3', 'Cz', 'C4', 'T4', 'M2', 'T5',
+                           'P3', 'Pz', 'P4', 'T6', 'O1', 'O2']
+        self.channel_names['EEG_cg'] = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'M1_cg', 'T3_cg', 'C3_cg',
+                           'Cz_cg', 'C4_cg', 'T4_cg', 'M2_cg', 'T5_cg', 'P3_cg', 'Pz_cg', 'P4_cg', 'T6_cg', 'O1_cg',
+                           'O2_cg']
+        self.channel_names['EEG'] = self.channel_names['EEG_ch'] + self.channel_names['EEG_cg']
+        self._read_raw_SVAROG_data(debug_flag)  # load the raw data, works inplace, no return value
+        return
 
-        channels = data['channels']
-        b_notch, a_notch = iirnotch(50, 30, fs=Fs_EEG)
+    def _read_raw_SVAROG_data(self, lowcut=4.0, highcut=40.0, q=8, debug_flag=False):
+        file = self.ID + ".obci" # SVAROG files have .obci extension
+        # read meta informations from xml file
+        with open(os.path.join(self.folder['EEG'], f"{file}.xml")) as fd: 
+            xml = xmltodict.parse(fd.read())
+
+        N_ch = int(xml['rs:rawSignal']['rs:channelCount'])
+        Fs_EEG = int(float(xml['rs:rawSignal']['rs:samplingFrequency']))
+        ChanNames = xml['rs:rawSignal']['rs:channelLabels']['rs:label']
+        # create a dictionary which maps channel names and their indexes
+        channels = {}
+        for i, name in enumerate(ChanNames):
+            channels[name] = i
+        self.channels['EEG'] = channels
+
+        # if debug print N_chan, Fs_EEG, ChanNames
+        if debug_flag:
+            print(f"N_chan: {N_ch},\n Fs_EEG: {Fs_EEG},\n ChanNames: {ChanNames}")
+
+        self.Fs['EEG'] = Fs_EEG
+        self.Fs['ECG'] = Fs_EEG  # ECG data is sampled at the same frequency as EEG data
+        # read raw data from .raw file
+        data = np.fromfile(os.path.join(self.folder['EEG'], f"{file}.raw"), dtype='float32').reshape((-1, N_ch))
+        data = data.T # transpose to have channels in rows and samples in columns
+        
+        # extract diode signal for event detection before any scaling and filtering
+        self.diode = data[channels['diode'], :]
+        # scan for events
+        self.events = self._scan_for_events(threshold=20000)
+        # scale the signal to microvolts    
+        data *= 0.0715  
+
+ 
+        # mount EEG data to M1 and M2 channels and filter the data
+        data = self._mount_EEG_data(data, channels)
+
+        # filter and decimate the EEG modality data
+        self._filter_decimate_and_set_EEG_signals(data, lowcut=lowcut, highcut=highcut, q=q)
+
+        # set the ECG modality with ECG signals
+        self._extract_ECG_data(data, channels)
+
+        # set the IBI modality computed from Porti ECG signals; IBIs are  interpolated to Fs_IBI [Hz]
+        self._compute_IBI(self.data['ECG'], Fs_IBI = 4)
+
+
+
+        return
+
+    def _mount_EEG_data(self, data, channels):
+        # mount EEG data to M1 and M2 channels; do it separately for caregiver and child as they have different references
+        for ch in self.channel_names['EEG_ch']:
+            if ch in channels:
+                idx = channels[ch]
+                data[idx, :] = data[idx, :] - 0.5 * (data[channels['M1'], :] + data[channels['M2'], :])
+        for ch in self.channel_names['EEG_cg']:
+            if ch in channels:
+                idx = channels[ch]
+                data[idx, :] = data[idx, :] - 0.5 * (data[channels['M1_cg'], :] + data[channels['M2_cg'], :])
+        # adjust channel lists by removeing channels M1 and M2 from the caregiver and child EEG channels, as they will not be used after linked ears montage
+        self.channel_names['EEG_ch'] = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'T3', 'C3', 'Cz', 'C4', 'T4', 'T5', 'P3', 'Pz',
+                           'P4', 'T6', 'O1', 'O2']
+        self.channel_names['EEG_cg'] = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'T3_cg', 'C3_cg', 'Cz_cg',
+                           'C4_cg', 'T4_cg', 'T5_cg', 'P3_cg', 'Pz_cg', 'P4_cg', 'T6_cg', 'O1_cg', 'O2_cg']
+        self.channel_names['EEG'] = self.channel_names['EEG_ch'] + self.channel_names['EEG_cg']
+        return data
+
+    def _filter_decimate_and_set_EEG_signals(self, data, lowcut=4.0, highcut=40.0, q=8):
+        
+        # design EEG filters
+        b_notch, a_notch = iirnotch(50, 30, fs=self.Fs['EEG'])
+        b_low, a_low = butter(4, highcut, btype='low', fs=self.Fs['EEG'])
+        b_high, a_high = butter(4, lowcut, btype='high', fs=self.Fs['EEG'])
+
+        #  arrays for filtered EEG signals
+        EEG_cg = np.zeros((len(self.channel_names['EEG_cg']), data.shape[1]))
+        channels_cg = {}
+        EEG_ch = np.zeros((len(self.channel_names['EEG_ch']), data.shape[1]))
+        channels_ch = {}
+
+        # filter the caregiver EEG data
+        chan_counter = 0
+        for idx, ch in enumerate(self.channels['EEG']):
+            if ch in self.channel_names['EEG_cg']:     
+                signal = data[idx, :].copy()
+                signal = filtfilt(b_notch, a_notch, signal, axis=0)
+                signal = filtfilt(b_low, a_low, signal, axis=0)
+                signal = filtfilt(b_high, a_high, signal, axis=0)
+                EEG_cg[chan_counter, :] = signal
+                channels_cg[ch] = chan_counter
+                chan_counter += 1
+
+        # filter the child EEG data
+        chan_counter = 0
+        for idx, ch in enumerate(self.channels['EEG']):
+            if ch in self.channel_names['EEG_ch']:
+                signal = data[idx, :].copy()
+                signal = filtfilt(b_notch, a_notch, signal, axis=0)
+                signal = filtfilt(b_low, a_low, signal, axis=0)
+                signal = filtfilt(b_high, a_high, signal, axis=0)
+                EEG_ch[chan_counter, :] = signal
+                channels_ch[ch] = chan_counter
+                chan_counter += 1
+
+        # decimate the data to reduce the sampling frequency q times
+        signal_cg = decimate(EEG_cg, q, axis=-1)
+        signal_ch = decimate(EEG_ch, q, axis=-1)
+
+        # set the filtered and decimated EEG data
+        self.channels['EEG'] = {'cg': channels_cg, 'ch': channels_ch}
+        self.data['EEG'] = {'cg': signal_cg, 'ch': signal_ch}
+        self.Fs['EEG'] = self.Fs['EEG'] // q  # new sampling frequency for the EEG data after decimation
+        # time vector for the EEG data after decimation
+        self.time['EEG'] = np.arange(0, signal_out.shape[1] / self.Fs['EEG'], 1 / self.Fs['EEG'])
+        self.Fs['EEG'] = self.Fs['EEG'] // q  # new sampling frequency for the EEG data after decimation
+        self.modalities.append('EEG')
+        return 
+ 
+    def _extract_ECG_data(self, data, channels):
+        t_ECG = np.arange(0, data.shape[1] / self.Fs['ECG'], 1 / self.Fs['ECG'])  # time vector for the ECG data in seconds
 
         # extract and filter the ECG data
-        ECG_ch = data['data'][channels['EKG1'], :] - data['data'][channels['EKG2'], :]
-        ECG_cg = data['data'][channels['EKG1_cg'], :] - data['data'][channels['EKG2_cg'], :]
-        sos_ecg = butter(5, 0.5, btype='high', output="sos", fs=Fs_EEG)
+        ECG_ch = data[channels['EKG1'], :] - data[channels['EKG2'], :]
+        ECG_cg = data[channels['EKG1_cg'], :] - data[channels['EKG2_cg'], :]
+
+        #design filters:
+        b_notch, a_notch = iirnotch(50, 30, fs=self.Fs['ECG'])
+        sos_ecg = butter(5, 0.5, btype='high', output="sos", fs=self.Fs['ECG'])
         ECG_ch_filtered = sosfiltfilt(sos_ecg, ECG_ch)
         ECG_ch_filtered = filtfilt(b_notch, a_notch, ECG_ch_filtered)
         ECG_cg_filtered = sosfiltfilt(sos_ecg, ECG_cg)
         ECG_cg_filtered = filtfilt(b_notch, a_notch, ECG_cg_filtered)
+        self.data['ECG'] = {'ch': ECG_ch_filtered, 'cg': ECG_cg_filtered}
+        self.times['ECG'] = t_ECG
+        self.modalities.append('ECG')
+        return None
+
+    def _compute_IBI(self, Fs_IBI=4):
         # interpolate IBI signals from ECG data
-        IBI_ch_interp, t_IBI_ch = self._interpolate_IBI_signals(ECG_ch_filtered, Fs_ECG, Fs_IBI=Fs_IBI, label='')
-        IBI_cg_interp, t_IBI_cg = self._interpolate_IBI_signals(ECG_cg_filtered, Fs_ECG, Fs_IBI=Fs_IBI, label='')
+        self.Fs['IBI'] = Fs_IBI 
+        IBI_ch_interp, t_IBI_ch = self._interpolate_IBI_signals(self.data['ECG']['ch'], self.Fs['ECG'], label='child', plot_flag=False)
+        IBI_cg_interp, t_IBI_cg = self._interpolate_IBI_signals(self.data['ECG']['cg'], self.Fs['ECG'], label='caregiver', plot_flag=False)
         # check if the IBI signals are of the same length
         if len(IBI_ch_interp) != len(IBI_cg_interp):
             min_length = min(len(IBI_ch_interp), len(IBI_cg_interp))
@@ -144,116 +202,30 @@ class DataLoader:
             t_IBI_cg = t_IBI_cg[:min_length]
 
         t_IBI = t_IBI_ch  # use the time vector for the child IBI as it is the same length as the caregiver IBI
-        # define EEG channels for child and caregiver
-        EEG_channels_ch = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'M1', 'T3', 'C3', 'Cz', 'C4', 'T4', 'M2', 'T5',
-                           'P3', 'Pz', 'P4', 'T6', 'O1', 'O2']
-        EEG_channels_cg = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'M1_cg', 'T3_cg', 'C3_cg',
-                           'Cz_cg', 'C4_cg', 'T4_cg', 'M2_cg', 'T5_cg', 'P3_cg', 'Pz_cg', 'P4_cg', 'T6_cg', 'O1_cg',
-                           'O2_cg']
+        self.data['IBI'] = {'ch': IBI_ch_interp, 'cg': IBI_cg_interp}   
+        self.times['IBI'] = t_IBI
+        self.modalities.append('IBI')
+        return None
 
-        # design EEG filters
-        b_low, a_low = butter(4, highcut, btype='low', fs=Fs_EEG)
-        b_high, a_high = butter(4, lowcut, btype='high', fs=Fs_EEG)
+    def _interpolate_IBI_signals(self,ECG, label='', plot_flag=False):
+        # Extract R-peaks location
+        _, info_ECG = nk.ecg_process(ECG, sampling_rate=self.Fs['ECG'], method='neurokit')
+        rpeaks = info_ECG["ECG_R_Peaks"]
 
-        # filter the caregiver EEG data
-        for i, ch in enumerate(EEG_channels_cg):
-            if ch in data['channels']:
-                idx = data['channels'][ch]
-                signal[idx, :] = filtfilt(b_notch, a_notch, signal[idx, :], axis=0)
-                signal[idx, :] = filtfilt(b_low, a_low, signal[idx, :], axis=0)
-                signal[idx, :] = filtfilt(b_high, a_high, signal[idx, :], axis=0)
-        # apply monage to the M1 M2 channels for caregiver EEG channels
-        for i, ch in enumerate(EEG_channels_cg):
-            if ch in data['channels']:
-                idx = data['channels'][ch]
-                signal[idx, :] = signal[idx, :] - 0.5 * (
-                            signal[data['channels']['M1_cg'], :] + signal[data['channels']['M2_cg'], :])
-                # remove channels M1 and M2 from the caregiver EEG channels, as they will not be used after linked ears montage
-        EEG_channels_cg = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'T3_cg', 'C3_cg', 'Cz_cg',
-                           'C4_cg', 'T4_cg', 'T5_cg', 'P3_cg', 'Pz_cg', 'P4_cg', 'T6_cg', 'O1_cg', 'O2_cg']
+        IBI = np.diff(rpeaks) / self.Fs['ECG'] * 1000  # IBI in ms
+        t = np.cumsum(IBI) / 1000  # time vector for the IBI signals [s]
+        t_ECG = np.arange(0, t[-1], 1 / self.Fs['IBI'])  # time vector for the interpolated IBI signals
+        cs = CubicSpline(t, IBI)
+        IBI_interp = cs(t_ECG)
+        if plot_flag:
+            plt.figure(figsize=(12, 6))
+            plt.plot(t_ECG, IBI_interp)
+            plt.xlabel('time [s]')
+            plt.ylabel('IBI [ms]')
+            plt.title(f'Interpolated IBI signal of {label} as a function of time')
+            plt.show()
+        return IBI_interp, t_ECG
 
-        # filter the child EEG data
-        for i, ch in enumerate(EEG_channels_ch):
-            if ch in data['channels']:
-                idx = data['channels'][ch]
-                signal[idx, :] = filtfilt(b_notch, a_notch, signal[idx, :], axis=0)
-                signal[idx, :] = filtfilt(b_low, a_low, signal[idx, :], axis=0)
-                signal[idx, :] = filtfilt(b_high, a_high, signal[idx, :], axis=0)
-                # apply monage to the M1 M2 channels for child EEG channels
-        for i, ch in enumerate(EEG_channels_ch):
-            if ch in data['channels']:
-                idx = data['channels'][ch]
-                signal[idx, :] = signal[idx, :] - 0.5 * (
-                            signal[data['channels']['M1'], :] + signal[data['channels']['M2'], :])
-                # remove channels M1 and M2 from the child EEG channels, as thye will not be used after linked ears montage
-        EEG_channels_ch = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'T3', 'C3', 'Cz', 'C4', 'T4', 'T5', 'P3', 'Pz',
-                           'P4', 'T6', 'O1', 'O2']
-
-        # decimate the data to reduce the sampling frequency q times
-        signal_out = decimate(signal, q, axis=-1)
-        Fs_EEG_q = Fs_EEG // q  # new sampling frequency for the EEG data after decimation
-        # time vector for the EEG data after decimation
-        t_EEG = np.arange(0, signal_out.shape[1] / Fs_EEG_q, 1 / Fs_EEG_q)  #
-
-        filtered_data = {
-            'id': self.ID,
-            'data_EEG': signal_out,
-            'times_EEG': t_EEG,  # time vector for the EEG data after decimation
-            'Fs_EEG': Fs_EEG_q,  # signal is decimated to this frequency
-            'ChanNames_EEG': data['ChanNames'],  # list of channel names
-            'channels_EEG': data['channels'],  # channels dictionary with indexes referenig to 'data' array
-            'EEG_channels_ch': EEG_channels_ch,  # list of names of child EEG channels
-            'EEG_channels_cg': EEG_channels_cg,  # list of names of caregiver EEG channels
-            'ECG_ch': ECG_ch_filtered,
-            'ECG_cg': ECG_cg_filtered,
-            'Fs_ECG': Fs_ECG,  # This is the original sampling frequency of the ECG data
-            't_ECG': t_ECG,  # time vector for the ECG data
-            'IBI_ch_interp': IBI_ch_interp,  # Interpolated IBI signal for the child
-            'IBI_cg_interp': IBI_cg_interp,  # Interpolated IBI signal for the caregiver
-            'Fs_IBI': Fs_IBI,  # Sampling frequency for the IBI signals
-            't_IBI': t_IBI,  # Time vector for the interpolated IBI signal
-            'ET_ch': None, # np.ndarray - will be added later
-            'ET_cg': None, # np.ndarray - will be added later
-            'Fs_ET': None, # int - will be added later
-            't_ET' : None, # np.ndarray - will be added later
-            'event': self._scan_for_events(self.data), # implemented as dictionary for more convenient
-            'epoch': None,
-            'paths': {
-                'directory_EEG': self.folder_EEG,
-                'directory_ET': self.folder_ET,
-                'directory_HRV': self.folder_H10,
-                'output_dir': self.output_dir
-            },
-            # tasks will be added later
-            'tasks': {
-                'dual_HRV': {
-                    'SECORE': None, # bool
-                    'movies': None, # bool
-                    'conversation': None, # bool
-                },
-                'dual_EEG': {
-                    'movies': None, # bool
-                    'conversation': None, # bool
-                },
-                'dual_ET': {
-                    'movies': None, #bool
-                    'conversation': None, #bool
-                }
-
-            },
-            # child info will be added later
-            'child_info': {
-                'birth_date': None, #datetime.date
-                'age_years': None, #int
-                'age_months': None, #int
-                'age_days': None, #int
-                'rec_date': None, #datetime.date
-                'group': None, #str
-                'sex': None #str
-            },
-            'notes': None # str or none
-        }
-        return filtered_data
     @staticmethod
     def load_output_data(filename):
         try:
@@ -271,37 +243,10 @@ class DataLoader:
     # method for load Warsaw_Data_Frame.csv
     def _load_csv_data(self, csv_file):
         pass
-    def _load_warsaw_pilot_data(self,folder, file):
-        file = file+".obci"
-        with open(os.path.join(folder, f"{file}.xml")) as fd:
-            xml = xmltodict.parse(fd.read())
 
-        N_ch = int(xml['rs:rawSignal']['rs:channelCount'])
-        Fs_EEG = int(float(xml['rs:rawSignal']['rs:samplingFrequency']))
-        ChanNames = xml['rs:rawSignal']['rs:channelLabels']['rs:label']
-        channels = {}
-        for i, name in enumerate(ChanNames):
-            channels[name] = i
-        data = np.fromfile(os.path.join(folder, f"{file}.raw"), dtype='float32').reshape((-1, N_ch))
-        data = data.T
 
-        if self.plot_flag:
-            ECG_CH = data[ChanNames.index('EKG1'), :] - data[ChanNames.index('EKG2'), :]
-            ECG_CG = data[ChanNames.index('EKG1_cg'), :] - data[ChanNames.index('EKG2_cg'), :]
-            fig, ax = plt.subplots(2, 1, sharex=True, sharey=True)
-            ax[0].plot(ECG_CH, label='Child ECG')
-            ax[1].plot(ECG_CG, label='Caregiver ECG')
-            plt.legend()
-            plt.show()
-        output = {
-            'data': data,
-            'Fs_EEG': Fs_EEG,
-            'ChanNames': ChanNames,
-            'channels': channels
-        }
-        return output
 
-    def _scan_for_events(self, data, threshold=20000):
+    def _scan_for_events(self, threshold=20000, plot_flag=False):
         '''Scan for events in the diode signal and plot them if required.
         Args:
             diode (np.ndarray): Diode signal.
@@ -315,14 +260,13 @@ class DataLoader:
                 - Talk_1
                 - Talk_2'''
         events = {'Talk_1': None, 'Talk_2': None, 'Movie_1': None, 'Movie_2': None, 'Movie_3': None}
-        diode_idx = data['channels']['Diode']
-        diode = data['data'][diode_idx, :]
-        Fs_EEG = data['Fs_EEG']
-        x = np.zeros(diode.shape)
-        d = diode.copy()
-        d /= threshold
+
+        Fs_EEG = self.Fs['EEG']
+        x = np.zeros(self.diode.shape)
+        d = self.diode.copy()
+        d /= threshold  
         x[d > 1] = 1
-        if self.plot_flag:
+        if plot_flag:
             plt.figure(figsize=(12, 6))
             plt.plot(d, 'b', label='Diode Signal normalized by threshold')
             plt.plot(x, 'r', label='Diode Signal Thresholded')
@@ -336,7 +280,7 @@ class DataLoader:
         down = np.zeros(y.shape, dtype=int)
         up[y == 1] = 1
         down[y == -1] = 1
-        if self.plot_flag:
+        if plot_flag:
             plt.plot(up, 'g', label='Up Events')
             plt.plot(down, 'm', label='Down Events')
             plt.legend()
@@ -386,21 +330,3 @@ class DataLoader:
             i += 1
         return events
 
-    def _interpolate_IBI_signals(self,ECG, Fs_ECG, Fs_IBI=4, label=''):
-        # Extract R-peaks location
-        _, info_ECG = nk.ecg_process(ECG, sampling_rate=Fs_ECG, method='neurokit')
-        rpeaks = info_ECG["ECG_R_Peaks"]
-
-        IBI = np.diff(rpeaks) / Fs_ECG * 1000  # IBI in ms
-        t = np.cumsum(IBI) / 1000  # time vector for the IBI signals [s]
-        t_ECG = np.arange(0, t[-1], 1 / Fs_IBI)  # time vector for the interpolated IBI signals
-        cs = CubicSpline(t, IBI)
-        IBI_interp = cs(t_ECG)
-        if self.plot_flag:
-            plt.figure(figsize=(12, 6))
-            plt.plot(t_ECG, IBI_interp)
-            plt.xlabel('time [s]')
-            plt.ylabel('IBI [ms]')
-            plt.title(f'Interpolated IBI signal of {label} as a function of time')
-            plt.show()
-        return IBI_interp, t_ECG
