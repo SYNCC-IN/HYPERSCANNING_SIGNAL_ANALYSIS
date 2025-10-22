@@ -11,9 +11,9 @@ from utils import plot_EEG_channels, plot_EEG_channels_pl, overlay_EEG_channels_
 
 
 if __name__ == "__main__":
-    folder = './DATA/W_010/' 
+    folder = '../DATA/W_010/' 
     file  =  'W_010.obci'  
-    # folder = './DATA/W_009/'
+    # folder = '../DATA/W_009/'
     # file  =  'W_009.obci'
     selected_events = ['Movie_1']# # events to extract data for ; #, 'Movie_2', 'Movie_3', 'Talk_1', 'Talk_2'
 
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     EEG_HRV_DTF = True
 
     data = load_warsaw_pilot_data(folder, file, plot=False)
-    events = scan_for_events(data, plot = False) #indexes of events in the data, this is done before filtering to avoid artifacts in the diode signal
+    events = scan_for_events(data, plot = True) #indexes of events in the data, this is done before filtering to avoid artifacts in the diode signal
     filtered_data = filter_warsaw_pilot_data(data)
 
     # First lets examine the data
