@@ -7,7 +7,8 @@ from scipy.interpolate import CubicSpline
 from scipy.signal import filtfilt, butter, decimate, sosfiltfilt, iirnotch
 import neurokit2 as nk
 import joblib
-
+import pandas as pd
+from collections import defaultdict 
 
 
 class DataLoader:
@@ -21,16 +22,9 @@ class DataLoader:
         
         self.ID = ID
         self.modalities = [] # list of modalities already loaded: 'EEG', 'H10', 'ET'
-        self.folder ={}
-        self.FS ={}
-        self.data = {}
 
 
 
-        
-        #self.data = self._load_warsaw_pilot_data(folder = self.folder_EEG, file=self.ID)
-        #self.output = self._filter_warsaw_pilot_data(self.data)
-        #self._save_to_file()
 
     def _set_EEG_data(self, folder_EEG, debug_flag=False):
         '''Set the EEG data for the DataLoader instance by loading and filtering the Warsaw pilot data.
@@ -42,12 +36,12 @@ class DataLoader:
         '''
         self.folder['EEG'] = folder_EEG
         # define EEG channels for child and caregiver
-        self.channel_names['EEG_ch'] = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'M1', 'T3', 'C3', 'Cz', 'C4', 'T4', 'M2', 'T5',
+        self.channel_names['EEG']['ch'] = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'M1', 'T3', 'C3', 'Cz', 'C4', 'T4', 'M2', 'T5',
                            'P3', 'Pz', 'P4', 'T6', 'O1', 'O2']
-        self.channel_names['EEG_cg'] = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'M1_cg', 'T3_cg', 'C3_cg',
+        self.channel_names['EEG']['cg'] = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'M1_cg', 'T3_cg', 'C3_cg',
                            'Cz_cg', 'C4_cg', 'T4_cg', 'M2_cg', 'T5_cg', 'P3_cg', 'Pz_cg', 'P4_cg', 'T6_cg', 'O1_cg',
                            'O2_cg']
-        self.channel_names['EEG'] = self.channel_names['EEG_ch'] + self.channel_names['EEG_cg']
+        self.channel_names['EEG']['all'] = self.channel_names['EEG']['ch'] + self.channel_names['EEG']['cg']
         self._read_raw_SVAROG_data(debug_flag)  # load the raw data, works inplace, no return value
         return
 
@@ -111,11 +105,11 @@ class DataLoader:
                 idx = channels[ch]
                 data[idx, :] = data[idx, :] - 0.5 * (data[channels['M1_cg'], :] + data[channels['M2_cg'], :])
         # adjust channel lists by removeing channels M1 and M2 from the caregiver and child EEG channels, as they will not be used after linked ears montage
-        self.channel_names['EEG_ch'] = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'T3', 'C3', 'Cz', 'C4', 'T4', 'T5', 'P3', 'Pz',
+        self.channel_names['EEG']['ch'] = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'T3', 'C3', 'Cz', 'C4', 'T4', 'T5', 'P3', 'Pz',
                            'P4', 'T6', 'O1', 'O2']
-        self.channel_names['EEG_cg'] = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'T3_cg', 'C3_cg', 'Cz_cg',
+        self.channel_names['EEG']['cg'] = ['Fp1_cg', 'Fp2_cg', 'F7_cg', 'F3_cg', 'Fz_cg', 'F4_cg', 'F8_cg', 'T3_cg', 'C3_cg', 'Cz_cg',
                            'C4_cg', 'T4_cg', 'T5_cg', 'P3_cg', 'Pz_cg', 'P4_cg', 'T6_cg', 'O1_cg', 'O2_cg']
-        self.channel_names['EEG'] = self.channel_names['EEG_ch'] + self.channel_names['EEG_cg']
+        self.channel_names['EEG']['all'] = self.channel_names['EEG']['ch'] + self.channel_names['EEG']['cg']
         return data
 
     def _filter_decimate_and_set_EEG_signals(self, data, lowcut=4.0, highcut=40.0, q=8):
@@ -226,26 +220,11 @@ class DataLoader:
             plt.show()
         return IBI_interp, t_ECG
 
-    @staticmethod
-    def load_output_data(filename):
-        try:
-            results = joblib.load(filename)
-            for key, val in results.items():
-                if isinstance(val, np.ndarray):
-                    print(f"{key}: {val.shape}")
-                else:
-                    print(f"{key}: {val}")
-            return results
-        except FileNotFoundError:
-            print(f"File not found {filename}")
-    def _save_to_file(self):
-        joblib.dump(self.output,self.output_dir+f"{self.ID}.joblib")
+
     # method for load Warsaw_Data_Frame.csv
     def _load_csv_data(self, csv_file):
         pass
-
-
-
+    
     def _scan_for_events(self, threshold=20000, plot_flag=False):
         '''Scan for events in the diode signal and plot them if required.
         Args:
@@ -330,3 +309,17 @@ class DataLoader:
             i += 1
         return events
 
+    @staticmethod
+    def load_output_data(filename):
+        try:
+            results = joblib.load(filename)
+            for key, val in results.items():
+                if isinstance(val, np.ndarray):
+                    print(f"{key}: {val.shape}")
+                else:
+                    print(f"{key}: {val}")
+            return results
+        except FileNotFoundError:
+            print(f"File not found {filename}")
+    def _save_to_file(self):
+        joblib.dump(self.output,self.output_dir+f"{self.ID}.joblib")
