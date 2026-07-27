@@ -690,6 +690,7 @@ def load_eeg_ncdf_as_mne_raw(
 
     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=["eeg"] * len(ch_names))
     raw = mne.io.RawArray(data_values, info, verbose=False)
+    raw.set_channel_types({'M1': 'misc', 'M2': 'misc'})
 
     if montage:
         try:

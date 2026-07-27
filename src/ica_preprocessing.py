@@ -113,6 +113,41 @@ class ICAPreprocessor:
                 sanitized[key] = str(value)
         return sanitized
 
+    def _extract_spectral_fit_outputs(self, model):
+        """Return (aperiodic, peaks, r_squared, error) for fooof or specparam backends."""
+        # FOOOF backend (legacy style attributes).
+        if hasattr(model, 'aperiodic_params_'):
+            aperiodic = np.asarray(getattr(model, 'aperiodic_params_', []), dtype=float)
+            peaks = np.asarray(getattr(model, 'peak_params_', []), dtype=float)
+            r_squared = float(getattr(model, 'r_squared_', np.nan))
+            error = float(getattr(model, 'error_', np.nan))
+            return aperiodic, peaks, r_squared, error
+
+        # specparam backend (results object API).
+        if hasattr(model, 'results'):
+            results = model.results
+            aperiodic = np.asarray(
+                results.params.aperiodic.asdict().get('aperiodic_fit', []),
+                dtype=float,
+            )
+            peaks = np.asarray(
+                results.params.periodic.asdict().get('peak_fit', []),
+                dtype=float,
+            )
+
+            r_squared = np.nan
+            error = np.nan
+            if hasattr(results, 'metrics'):
+                categories = getattr(results.metrics, 'categories', [])
+                if 'gof' in categories:
+                    r_squared = float(results.metrics.get_metrics('gof'))
+                if 'error' in categories:
+                    error = float(results.metrics.get_metrics('error'))
+
+            return aperiodic, peaks, r_squared, error
+
+        raise AttributeError("Unsupported spectral model backend output format")
+
     def preprocess_and_save(self, cleaned_signals_folder: Path, ica_n_components: int = 15, ica_max_iter: int = 2000, eog_channels: list = ['Fp1', 'Fp2'], eog_threshold: float = 3.0, save_plots: bool = True):
         '''
         Preprocess EEG signals using ICA to remove blink artifacts, then save the cleaned signals to NetCDF files with enriched metadata.
@@ -208,7 +243,7 @@ class ICAPreprocessor:
         output_folder: Path,
         ica_n_components: int = 15,
         ica_max_iter: int = 2000,
-        save_plot: bool = True,
+        save_plot: bool = False,
     ) -> None:
         """
         Decompose EEG signals using ICA and save raw signals, ICA model, and sources to disk.
@@ -257,6 +292,8 @@ class ICAPreprocessor:
             print(f"  Saved raw:        {raw_path.name}")
 
             raw_for_ica = raw.copy()
+            raw_for_ica.set_channel_types({'M1': 'misc', 'M2': 'misc'})
+
             raw_for_ica.filter(l_freq=1.0, h_freq=None, verbose='ERROR')
 
             ica = ICA(n_components=ica_n_components, random_state=42, max_iter=ica_max_iter)
@@ -264,7 +301,7 @@ class ICAPreprocessor:
                 warnings.filterwarnings("ignore", category=RuntimeWarning, module="mne")
                 old_log_level = mne.set_log_level('ERROR', return_old_level=True)
                 try:
-                    ica.fit(raw_for_ica)
+                    ica.fit(raw_for_ica, picks='eeg', verbose='ERROR')
                 finally:
                     mne.set_log_level(old_log_level)
 
@@ -421,15 +458,18 @@ class ICAPreprocessor:
                     )
                     fm.fit(freqs, psd_power[j], [psd_fmin, psd_fmax])
 
-                    fooof_aperiodic[j] = fm.aperiodic_params_[:2]
-                    peaks = fm.peak_params_
+                    aperiodic_params, peaks, r_squared, fit_error = self._extract_spectral_fit_outputs(fm)
+
+                    if aperiodic_params.size >= 2:
+                        fooof_aperiodic[j] = aperiodic_params[:2]
+
                     if peaks is not None and len(peaks) > 0:
                         n_found = min(len(peaks), fooof_max_n_peaks)
                         fooof_peaks_arr[j, :n_found, :] = peaks[:n_found]
 
-                    fooof_r_squared[j] = fm.r_squared_
-                    fooof_error[j] = fm.error_
-                    fooof_valid[j] = bool(fm.r_squared_ >= fooof_r_squared_threshold)
+                    fooof_r_squared[j] = r_squared
+                    fooof_error[j] = fit_error
+                    fooof_valid[j] = bool(np.isfinite(r_squared) and r_squared >= fooof_r_squared_threshold)
                     status = '✓' if fooof_valid[j] else '✗'
                     print(
                         f"  {comp_names[j]}: offset={fooof_aperiodic[j, 0]:.2f}  exp={fooof_aperiodic[j, 1]:.2f}  "
