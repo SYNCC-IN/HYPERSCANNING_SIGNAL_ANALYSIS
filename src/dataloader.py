@@ -648,11 +648,7 @@ def _mount_eeg_data(multimodal_data, raw_eeg_data):
         if channel in channel_mapping and channel not in ("M1_cg", "M2_cg"):
             raw_eeg_data[channel_mapping[channel], :] -= ref_cg
 
-    multimodal_data.references = (
-        "linked ears montage: (M1+M2)/2; "
-        "M1, M2, M1_cg, M2_cg retain original (pre-reference) values — "
-        "reconstruction: ch_original[i] = ch_rereferenced[i] + 0.5*(M1 + M2)"
-    )
+    multimodal_data.references = "linked ears montage: (M1+M2)/2"
 
 
 def _design_eeg_filters(
