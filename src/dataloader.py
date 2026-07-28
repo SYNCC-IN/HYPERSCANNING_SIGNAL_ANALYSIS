@@ -627,7 +627,7 @@ def _read_raw_svarog_data(multimodal_data: MultimodalData, plot_flag):
 def _mount_eeg_data(multimodal_data, raw_eeg_data):
     channel_mapping = multimodal_data.eeg_channel_mapping
 
-    # Oblicz referencje PRZED modyfikacją jakichkolwiek kanałów
+    # Compute references before modifying any channels
     ref_ch = 0.5 * (
         raw_eeg_data[channel_mapping["M1"], :].copy()
         + raw_eeg_data[channel_mapping["M2"], :].copy()
