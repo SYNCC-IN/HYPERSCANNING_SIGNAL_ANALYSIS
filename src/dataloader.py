@@ -638,17 +638,17 @@ def _mount_eeg_data(multimodal_data, raw_eeg_data):
         + raw_eeg_data[channel_mapping["M2_cg"], :].copy()
     )
 
-    # Rereferuj wszystkie kanały child OPRÓCZ M1 i M2
+    # change the reference for all child channels but not for M1 i M2
     for channel in multimodal_data.eeg_channel_names_ch:
         if channel in channel_mapping and channel not in ("M1", "M2"):
             raw_eeg_data[channel_mapping[channel], :] -= ref_ch
 
-    # Rereferuj wszystkie kanały caregiver OPRÓCZ M1_cg i M2_cg
+    # change the reference for all caregiver but not for M1_cg i M2_cg
     for channel in multimodal_data.eeg_channel_names_cg:
         if channel in channel_mapping and channel not in ("M1_cg", "M2_cg"):
             raw_eeg_data[channel_mapping[channel], :] -= ref_cg
 
-    multimodal_data.references = "linked ears montage: (M1+M2)/2"
+    multimodal_data.references = "linked ears montage: (M1+M2)/2; M1, M2, M1_cg, M2_cg retain original (pre-reference) values \n — reconstruction: ch_original[i] = ch_rereferenced[i] + 0.5*(M1 + M2) \n \n — reconstruction: cg_original[i] = cg_rereferenced[i] + 0.5*(M1_cg + M2_cg)"
 
 
 def _design_eeg_filters(
