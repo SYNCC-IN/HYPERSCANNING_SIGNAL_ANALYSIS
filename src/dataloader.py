@@ -625,6 +625,7 @@ def _read_raw_svarog_data(multimodal_data: MultimodalData, plot_flag):
 
 
 def _mount_eeg_data(multimodal_data, raw_eeg_data):
+    """Apply linked-ears rereferencing while leaving M1/M2 and M1_cg/M2_cg unchanged."""
     channel_mapping = multimodal_data.eeg_channel_mapping
 
     # Compute references before modifying any channels
