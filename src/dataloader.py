@@ -625,29 +625,29 @@ def _read_raw_svarog_data(multimodal_data: MultimodalData, plot_flag):
 
 
 def _mount_eeg_data(multimodal_data, raw_eeg_data):
-    """Mount EEG data to M1 and M2 channels for both caregiver and child.
-    Args:
-        multimodal_data (MultimodalData): The multimodal data instance containing EEG metadata.
-        raw_eeg_data (np.ndarray): The raw EEG data array with shape (n_channels, n_samples).
-    """
+    """Apply linked-ears rereferencing while leaving M1/M2 and M1_cg/M2_cg unchanged."""
     channel_mapping = multimodal_data.eeg_channel_mapping
-    # mount EEG data to M1 and M2 channels; do it separately for caregiver and
-    # child as they have different references
-    for channel in multimodal_data.eeg_channel_names_ch:
-        if channel in channel_mapping:
-            idx = channel_mapping[channel]
-            raw_eeg_data[idx, :] -= 0.5 * (
-                raw_eeg_data[channel_mapping["M1"], :]
-                + raw_eeg_data[channel_mapping["M2"], :]
-            )
 
+    # Compute references before modifying any channels
+    ref_ch = 0.5 * (
+        raw_eeg_data[channel_mapping["M1"], :].copy()
+        + raw_eeg_data[channel_mapping["M2"], :].copy()
+    )
+    ref_cg = 0.5 * (
+        raw_eeg_data[channel_mapping["M1_cg"], :].copy()
+        + raw_eeg_data[channel_mapping["M2_cg"], :].copy()
+    )
+
+    # Rereferuj wszystkie kanały child OPRÓCZ M1 i M2
+    for channel in multimodal_data.eeg_channel_names_ch:
+        if channel in channel_mapping and channel not in ("M1", "M2"):
+            raw_eeg_data[channel_mapping[channel], :] -= ref_ch
+
+    # Rereferuj wszystkie kanały caregiver OPRÓCZ M1_cg i M2_cg
     for channel in multimodal_data.eeg_channel_names_cg:
-        if channel in channel_mapping:
-            idx = channel_mapping[channel]
-            raw_eeg_data[idx, :] -= 0.5 * (
-                raw_eeg_data[channel_mapping["M1_cg"], :]
-                + raw_eeg_data[channel_mapping["M2_cg"], :]
-            )
+        if channel in channel_mapping and channel not in ("M1_cg", "M2_cg"):
+            raw_eeg_data[channel_mapping[channel], :] -= ref_cg
+
     multimodal_data.references = "linked ears montage: (M1+M2)/2"
 
 
