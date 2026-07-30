@@ -238,6 +238,8 @@ def export_chunk_to_xarray(
     member,
     time_margin,
     chunk_name,
+    EEG_montage=None,
+    EEG_bad_channels=None,
     verbose=True,
     logger: Optional[object] = None,
 ):
@@ -322,7 +324,77 @@ def export_chunk_to_xarray(
     time = time - chunk_start
 
     if selected_modality == 'EEG':
-        channels = [ch.replace(f'EEG_{member}_', '') for ch in channels]
+            # ── Strip the EEG_{member}_ prefix so channel names match 10-20 labels
+            channels = [ch.replace(f'EEG_{member}_', '') for ch in channels]
+
+            if EEG_montage is not None:
+                import mne
+
+                # ── Resolve montage name ──────────────────────────────────────────
+                # 'CAR' is not an MNE montage — it is a rereferencing instruction.
+                # In that case we still need electrode positions for interpolation,
+                # so we fall back to 'standard_1020'.
+                montage_name = 'standard_1020' if EEG_montage == 'CAR' else EEG_montage
+
+                # ── Identify bad channels for the current member ──────────────────
+                # EEG_bad_channels entries are expected to end with '_ch' or '_cg'
+                # (e.g. 'T3_ch', 'Fp1_cg').  After stripping the suffix we get the
+                # base 10-20 label and can match it against the stripped channel list.
+                bad_channels_for_member: list[str] = []
+                if EEG_bad_channels:
+                    member_suffix = f'_{member}'              # '_ch'  or  '_cg'
+                    suffix_len    = len(member_suffix)        # always 3
+                    for bad_ch in EEG_bad_channels:
+                        if bad_ch.endswith(member_suffix):
+                            base = bad_ch[:-suffix_len]       # e.g. 'T3_ch' → 'T3'
+                            if base in channels:
+                                bad_channels_for_member.append(base)
+
+                if verbose and bad_channels_for_member:
+                    msg = (f"  Bad channels for member '{member}': "
+                        f"{bad_channels_for_member} — will be interpolated")
+                    logger.info(msg) if logger else print(msg)
+
+                # ── Channel types: M1/M2 → misc so they are excluded from both
+                #    interpolation (no neighbour weighting) and CAR ───────────────
+                MASTOIDS = {'M1', 'M2'}
+                ch_types = [
+                    'misc' if ch in MASTOIDS else 'eeg'
+                    for ch in channels
+                ]
+
+                # ── Build MNE RawArray ────────────────────────────────────────────
+                info_eeg = mne.create_info(
+                    ch_names=channels,
+                    sfreq=multimodal_data.fs,
+                    ch_types=ch_types,
+                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    info_eeg.set_montage(montage_name, on_missing='ignore', verbose=False)
+
+                # ── Build MNE RawArray (MNE expects Volts, data is in μV) ────────────────
+                raw = mne.io.RawArray(data * 1e-6, info_eeg, verbose=False)
+
+                # ── Step 1: interpolate bad EEG channels ──────────────────────────
+                # Must come before rereferencing so the interpolated signal
+                # contributes to the average rather than the artefact.
+                if bad_channels_for_member:
+                    raw.info['bads'] = bad_channels_for_member
+                    raw.interpolate_bads(reset_bads=True)   # reset_bads clears info['bads']
+                                                            # so interpolated channels are
+                                                            # included in the CAR below
+
+                # ── Step 2: rereference to CAR (only when requested) ─────────────
+                # M1/M2 are already typed as 'misc', so set_eeg_reference('average')
+                # automatically excludes them from the mean computation.
+                if EEG_montage == 'CAR':
+                    raw.set_eeg_reference('average', projection=False, verbose=False)
+
+                # ── Retrieve in μV for xarray export ─────────────────────────────────────
+                data     = raw.get_data() * 1e6      # V → μV ; (n_channels, n_times)      # 
+                channels = raw.ch_names            # unchanged order, but bads now clear
+
     elif selected_modality == 'ET':
         channels = [ch.replace(f'ET_{member}_', '') for ch in channels]
     elif selected_modality == 'IBI':
@@ -469,6 +541,8 @@ def export_passive_and_talk_data(
     time_margin=20,
     input_data_path="../data",
     export_path="../data/UNIWAW_imported",
+    mounts_eeg_multimodal=False,
+    export_mounted = 'CAR',
     verbose=False,
     logger: Optional[object] = None,
 ):
@@ -527,6 +601,7 @@ def export_passive_and_talk_data(
             et_pupil_cutoff=4,
             pupil_model_confidence=0.9,
             decimate_factor=decimate_factor,
+            mounts_eeg=mounts_eeg_multimodal,
             plot_flag=plot_flag,
         )
 
@@ -643,6 +718,15 @@ def _infer_sfreq_from_time_coord(time_coord: "np.ndarray") -> float:
     return float(1.0 / np.median(dt))
 
 
+_EEG_10_20_CHANNELS = frozenset({
+    'Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
+    'T3',  'C3',  'Cz', 'C4', 'T4',
+    'T5',  'P3',  'Pz', 'P4', 'T6',
+    'O1',  'O2',
+})
+_MASTOID_CHANNELS = frozenset({'M1', 'M2'})
+
+
 def load_eeg_ncdf_as_mne_raw(
     ncdf_path: str,
     montage: Optional[str] = "standard_1020",
@@ -650,6 +734,12 @@ def load_eeg_ncdf_as_mne_raw(
     data_xr: Optional[xr.DataArray] = None,
 ) -> "mne.io.RawArray":
     """Load an exported EEG NetCDF file and convert it to MNE RawArray.
+
+    Channel types are assigned as follows:
+    - Channels in the standard 10-20 set (Fp1, Fp2, …, O2) → 'eeg'
+    - M1, M2 (linked-ears reference) → 'misc'
+    This means ``picks='eeg'`` in downstream MNE calls automatically
+    excludes the mastoid reference channels.
 
     Args:
         ncdf_path: Path to exported EEG NetCDF file.
@@ -688,9 +778,18 @@ def load_eeg_ncdf_as_mne_raw(
     else:
         sfreq = float(sfreq_attr)
 
-    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=["eeg"] * len(ch_names))
+    # Assign initial channel types: eeg for known 10-20 channels, misc for
+    # mastoids, eeg as fallback for anything unrecognised (safe default).
+    ch_types = [
+        'misc' if ch in _MASTOID_CHANNELS else 'eeg'
+        for ch in ch_names
+    ]
+
+    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
     raw = mne.io.RawArray(data_values, info, verbose=False)
 
+    # Set montage after channel types so that MNE does not warn about
+    # missing positions for misc (mastoid) channels.
     if montage:
         try:
             raw.set_montage(montage, on_missing="ignore")
