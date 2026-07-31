@@ -80,6 +80,73 @@ def test_export_chunk_to_xarray_resets_time_and_stores_events_structure(multimod
     assert np.isclose(events_structure[2]["start_rel_s"], 40.0)
 
 
+def test_run_eeg_autoreject_quality_report_uses_task_events_metadata(monkeypatch):
+    """Chunk exports should provide a usable event duration via task metadata."""
+    import types
+
+    data_xr = xr.DataArray(
+        np.zeros((3, 1), dtype=float),
+        coords=[np.array([0.0, 0.5, 1.0]), ["Fp1"]],
+        dims=["time", "channel"],
+        name="signals",
+    )
+    data_xr.attrs["time_margin_s"] = 0.5
+    data_xr.attrs["task_events_structure"] = [
+        {"name": "Peppa", "start_s": 0.0, "duration_s": 1.0},
+        {"name": "Incredibles", "start_s": 1.0, "duration_s": 1.5},
+    ]
+
+    captured = {}
+
+    class DummyRaw:
+        def __init__(self):
+            self.first_samp = 0
+            self.info = {"sfreq": 1.0}
+
+    class DummyEpochs:
+        def __init__(self):
+            self.events = np.array([[0, 0, 0]], dtype=int)
+            self.ch_names = ["Fp1"]
+
+        def __len__(self):
+            return 1
+
+    class DummyAutoReject:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fit(self, epochs):
+            return None
+
+        def transform(self, epochs, return_log=True):
+            class DummyRejectLog:
+                labels = np.array([[0]])
+                bad_epochs = np.array([False])
+
+            return epochs, DummyRejectLog()
+
+    class DummyMneModule(types.SimpleNamespace):
+        @staticmethod
+        def make_fixed_length_epochs(raw, duration, preload=True, verbose=True):
+            return DummyEpochs()
+
+    monkeypatch.setattr(export, "load_xarray_from_netcdf", lambda path: data_xr)
+    monkeypatch.setattr(export, "load_eeg_ncdf_as_mne_raw", lambda **kwargs: DummyRaw())
+    monkeypatch.setattr(export, "plot_eeg_with_rejected_segments", lambda *args, **kwargs: (object(), object()))
+
+    monkeypatch.setitem(__import__("sys").modules, "mne", DummyMneModule())
+
+    class DummyAutoRejectModule(types.SimpleNamespace):
+        AutoReject = DummyAutoReject
+
+    monkeypatch.setitem(__import__("sys").modules, "autoreject", DummyAutoRejectModule())
+
+    report = export.run_eeg_autoreject_quality_report(ncdf_path="dummy.nc", verbose=False)
+
+    assert report["epoch_summary"]["start_s"].iloc[0] == pytest.approx(0.0)
+    assert report["epoch_summary"]["end_s"].iloc[0] == pytest.approx(2.0)
+
+
 def test_export_passive_and_talk_data_exports_two_chunks_with_default_margin(
     multimodal_data_sample,
     monkeypatch,

@@ -79,6 +79,7 @@ def create_multimodal_data(
     lowcut=4.0,
     highcut=40.0,
     eeg_filter_type="fir",
+    mounts_eeg=False,
     interpolate_et_during_blinks_threshold=0,
     median_filter_size=64,
     low_pass_et_order=351,
@@ -118,6 +119,7 @@ def create_multimodal_data(
         lowcut (float, optional): Low cut-off frequency for EEG filtering. Defaults to 4.0 Hz.
         highcut (float, optional): High cut-off frequency for EEG filtering. Defaults to 40.0 Hz.
         eeg_filter_type (str, optional): Type of filter to use for EEG data ('fir' or 'iir'). Defaults to 'fir'.
+        mounts_eeg (bool, optional): Whether to mount EEG data to M1 and M2 channels. Defaults to False.
         interpolate_et_during_blinks_threshold (float, optional): Confidence threshold for interpolating ET data during blinks. 0 means no interpolation. Defaults to 0.
         median_filter_size (int, optional): Size of the median filter for ET data processing. Defaults to 64.
         low_pass_et_order (int, optional): Order of the low-pass filter for ET data processing. Defaults to 351.
@@ -183,6 +185,7 @@ def create_multimodal_data(
             highcut=highcut,
             eeg_filter_type=eeg_filter_type,
             window_size=window_size,
+            mounts_eeg=mounts_eeg, # wether to mount EEG data to M1 and M2 channels
             plot_flag=plot_flag,
         )
     if load_et:
@@ -505,6 +508,7 @@ def load_eeg_data(
         eeg_filter_type (str, optional): Type of filter to use ('fir' or 'iir'). Defaults to 'fir'.
         window_size (float, optional): Sliding window size in seconds used for
             RMSSD computation from ECG. Defaults to 30.
+        mounts_eeg (bool, optional): Whether to mount EEG data to M1 and M2 channels. Defaults to False.
         plot_flag (bool, optional): Whether to plot intermediate results for debugging/visualization. Defaults to False.
 
     Returns:

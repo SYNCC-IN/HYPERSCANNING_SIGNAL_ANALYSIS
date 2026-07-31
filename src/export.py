@@ -7,6 +7,7 @@ import os
 import json
 import numbers
 import warnings
+import mne
 from dataclasses import asdict, is_dataclass
 from typing import Optional, TYPE_CHECKING
 
@@ -241,6 +242,7 @@ def export_chunk_to_xarray(
     EEG_montage=None,
     EEG_bad_channels=None,
     verbose=True,
+    mne_plot_flag=False,
     logger: Optional[object] = None,
 ):
     '''Export a chunk spanning multiple events from a MultimodalData instance to xarray.
@@ -261,8 +263,26 @@ def export_chunk_to_xarray(
 
     Returns:
         xarray.DataArray: Exported chunk with dimensions ``time`` and ``channel``.
-        chunks are meant to correspond to tasks in the experiment, 
-        and the time axis is reset to 0 at the start of the first event in ``selected_events``.
+        Chunks are meant to correspond to tasks in the experiment, and the time axis
+        is reset to 0 at the start of the first event in ``selected_events``.
+
+        The returned object carries its metadata in the DataArray attributes. In
+        particular, ``attrs['metadata_json']`` stores a JSON-serialized dictionary
+        describing the export context, with keys such as ``notes``,
+        ``child_info``, and ``event_order``. For EEG exports, the same payload also
+        includes an ``eeg`` section with ``filtration`` and ``references`` details.
+        Task-level information is stored separately in the attributes
+        ``task_name``, ``task_start``, ``task_duration``,
+        ``task_event_names_csv``, ``task_event_names_json``, and
+        ``task_events_structure``. The last one is a list of dictionaries, one per
+        event in the chunk, containing ``name``, ``start_s``, ``start_rel_s``, and
+        ``duration_s``. The values can be read from the exported DataArray via
+        ``data_xr.attrs['task_name']`` or by decoding
+        ``data_xr.attrs['task_event_names_json']`` and
+        ``data_xr.attrs['task_events_structure']`` as needed.
+        Additional attributes such as ``dyad_id``, ``who``, ``sampling_freq``,
+        ``event_name``, ``event_start``, ``event_duration``, ``time_margin_s``,
+        ``channel_names_csv``, and ``channel_names_json`` are also attached.
     '''
     if not selected_events:
         raise ValueError("selected_events must be a non-empty list of event names.")
@@ -313,6 +333,7 @@ def export_chunk_to_xarray(
         selected_channels=selected_channels,
         selected_times=selected_time,
     )
+    metadata = _build_export_metadata(multimodal_data, selected_modality)
     if signals is None:
         raise ValueError(
             f"No signals available for modality='{selected_modality}', member='{member}', "
@@ -328,14 +349,6 @@ def export_chunk_to_xarray(
             channels = [ch.replace(f'EEG_{member}_', '') for ch in channels]
 
             if EEG_montage is not None:
-                import mne
-
-                # ── Resolve montage name ──────────────────────────────────────────
-                # 'CAR' is not an MNE montage — it is a rereferencing instruction.
-                # In that case we still need electrode positions for interpolation,
-                # so we fall back to 'standard_1020'.
-                montage_name = 'standard_1020' if EEG_montage == 'CAR' else EEG_montage
-
                 # ── Identify bad channels for the current member ──────────────────
                 # EEG_bad_channels entries are expected to end with '_ch' or '_cg'
                 # (e.g. 'T3_ch', 'Fp1_cg').  After stripping the suffix we get the
@@ -362,37 +375,72 @@ def export_chunk_to_xarray(
                     'misc' if ch in MASTOIDS else 'eeg'
                     for ch in channels
                 ]
+                # ── Map old 10-20 names → new equivalents for MNE standard_1020 montage ──
+                # MNE's montage uses T7/T8/P7/P8; old-style T3/T4/T5/T6 have no positions
+                # and would be silently skipped by interpolate_bads.
+                # We rename for MNE and save to xarray export with the updated names.
+                OLD_TO_NEW = {'T3': 'T7', 'T4': 'T8', 'T5': 'P7', 'T6': 'P8'}
+                # NEW_TO_OLD = {v: k for k, v in OLD_TO_NEW.items()}
+
+                channels_for_mne = [OLD_TO_NEW.get(ch, ch) for ch in channels]
+                bad_channels_for_mne = [OLD_TO_NEW.get(ch, ch) for ch in bad_channels_for_member]
+                if verbose:
+                    msg = (f"  For member '{member}' task '{chunk_name}': "
+                           f"channel renaming for MNE compatibility: "
+                           f"{ {ch: new_ch for ch, new_ch in zip(channels, channels_for_mne) if ch != new_ch} }")
+                    logger.info(msg) if logger else print(msg)
 
                 # ── Build MNE RawArray ────────────────────────────────────────────
                 info_eeg = mne.create_info(
-                    ch_names=channels,
+                    ch_names=channels_for_mne,
                     sfreq=multimodal_data.fs,
                     ch_types=ch_types,
                 )
-                with warnings.catch_warnings():
-                    warnings.simplefilter('ignore')
-                    info_eeg.set_montage(montage_name, on_missing='ignore', verbose=False)
 
                 # ── Build MNE RawArray (MNE expects Volts, data is in μV) ────────────────
-                raw = mne.io.RawArray(data * 1e-6, info_eeg, verbose=False)
+                raw = mne.io.RawArray(data.T * 1e-6, info_eeg, verbose=False)
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    raw.set_montage('standard_1020', on_missing='ignore', verbose=False)  # ← on raw, not info
 
                 # ── Step 1: interpolate bad EEG channels ──────────────────────────
                 # Must come before rereferencing so the interpolated signal
                 # contributes to the average rather than the artefact.
                 if bad_channels_for_member:
-                    raw.info['bads'] = bad_channels_for_member
+                    raw.info['bads'] = bad_channels_for_mne
+                    raw_before = raw.copy()
                     raw.interpolate_bads(reset_bads=True)   # reset_bads clears info['bads']
                                                             # so interpolated channels are
                                                             # included in the CAR below
+                    metadata['interpolation'] = f'Bad channels interpolated during export: {bad_channels_for_mne}'
+                    if mne_plot_flag:
+                        raw_before.plot(title=f"EEG signals for {member} before interpolation", block=False, show=True, scalings='auto', verbose=False)
+                        raw.plot(title=f"EEG signals for {member} after interpolation", block=True, show=True, scalings='auto', verbose=False)
 
                 # ── Step 2: rereference to CAR (only when requested) ─────────────
                 # M1/M2 are already typed as 'misc', so set_eeg_reference('average')
                 # automatically excludes them from the mean computation.
                 if EEG_montage == 'CAR':
-                    raw.set_eeg_reference('average', projection=False, verbose=False)
+                    raw_before = raw.copy()
+                    raw.set_eeg_reference('average', projection=False, verbose=False)    
+                    mastoids_present = [ch for ch in ('M1', 'M2') if ch in raw.ch_names]
+                    if mastoids_present:
+                        raw.drop_channels(mastoids_present)
+                        metadata['references'] = (
+                            "average reference applied; M1/M2 excluded from average and dropped post-rereferencing"
+                        )
+                    if verbose:
+                        msg = (f"  For member '{member}' task: {chunk_name}: "
+                               f"{'average reference applied; M1/M2 excluded from average and dropped post-rereferencing'}")
+                        logger.info(msg) if logger else print(msg)
+                    if mne_plot_flag:
+                        raw_before.plot(title=f"EEG signals for {member} task: {chunk_name} before CAR", block=False, show=True, scalings='auto', verbose=False)
+                        raw.plot(title=f"EEG signals for {member} task: {chunk_name} after CAR", block=True, show=True, scalings='auto', verbose=False)
+                else:
+                    metadata['references'] = "No EEG montage applied; original reference retained"
 
                 # ── Retrieve in μV for xarray export ─────────────────────────────────────
-                data     = raw.get_data() * 1e6      # V → μV ; (n_channels, n_times)      # 
+                data     = raw.get_data().T * 1e6      # V → μV ; (n_channels, n_times)      # 
                 channels = raw.ch_names            # unchanged order, but bads now clear
 
     elif selected_modality == 'ET':
@@ -415,7 +463,7 @@ def export_chunk_to_xarray(
         name='signals',
     )
 
-    metadata = _build_export_metadata(multimodal_data, selected_modality)
+   
     events_structure = _build_events_structure(multimodal_data, ordered_events, chunk_start)
 
     data_xr.attrs.update(
@@ -541,9 +589,11 @@ def export_passive_and_talk_data(
     time_margin=20,
     input_data_path="../data",
     export_path="../data/UNIWAW_imported",
-    mounts_eeg_multimodal=False,
-    export_mounted = 'CAR',
+    mounts_eeg_multimodal=False, # wether to mount EEG channels to M1/M2 or not (if False, EEG channels are exported as recorded)
+    export_mounted = 'CAR', # wether to export EEG data as CAR (common average reference) or as recorded (None)
+    EEG_bad_channels=None, # list of bad EEG channels to interpolate (e.g., ['T3_ch', 'Fp1_cg'])
     verbose=False,
+    mne_plot_flag=False,
     logger: Optional[object] = None,
 ):
     '''Export two chunk types per modality/member: passive movies and talk.
@@ -655,7 +705,10 @@ def export_passive_and_talk_data(
                         member=who,
                         time_margin=time_margin,
                         chunk_name=chunk_name,
-                        verbose=False,
+                        EEG_montage=export_mounted if modality == 'EEG' else None,
+                        EEG_bad_channels=EEG_bad_channels if modality == 'EEG' else None,
+                        verbose=verbose,
+                        mne_plot_flag=mne_plot_flag,
                         logger=logger,
                     )
                     file_path = os.path.join(
@@ -787,6 +840,17 @@ def load_eeg_ncdf_as_mne_raw(
 
     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
     raw = mne.io.RawArray(data_values, info, verbose=False)
+    # get the monatege and interpolation info from the metadata if available
+    metadata = get_export_metadata(data_xr)
+    if 'interpolation' in metadata:
+        interpolation = str(metadata['interpolation'])
+    else:
+        interpolation = ""
+    if 'references' in metadata:
+        references = str(metadata['references'])
+    else:
+        references = ""
+    raw.info['temp'] = f"; {interpolation}; {references}"
 
     # Set montage after channel types so that MNE does not warn about
     # missing positions for misc (mastoid) channels.
@@ -846,9 +910,10 @@ def plot_eeg_with_rejected_segments(
     data = data[:n_channels]
     ch_names = ch_names[:n_channels]
 
-    stds = np.std(data, axis=1, keepdims=True)
-    stds[stds == 0] = 1.0
-    normalized = data / stds
+    stds = np.std(data,  keepdims=True) # axis=1,
+    # stds[stds == 0] = 1.0
+    normalized = data / stds # normalized to unit variance of all channels 
+                             # for better visual comparison across channels
 
     fig, ax = plt.subplots(figsize=figsize)
     offsets = np.arange(n_channels) * spacing
@@ -878,7 +943,11 @@ def plot_eeg_with_rejected_segments(
     ax.set_yticklabels(ch_names)
     ax.set_xlabel("Time [s]  (0 = event start)")
     ax.set_ylabel("EEG channel")
-    ax.set_title("EEG traces with AutoReject suggested rejection windows")
+    if "temp" in raw.info:
+        note = str(raw.info["temp"])
+    else:
+        note = ""
+    ax.set_title(f"AutoReject suggested rejections. {note}")
     ax.grid(axis="x", alpha=0.2)
     fig.tight_layout()
     return fig, ax
@@ -1110,8 +1179,29 @@ def run_eeg_autoreject_quality_report(
     # Load NCDF once – reuse the DataArray for both metadata extraction and MNE conversion.
     _data_xr_meta = load_xarray_from_netcdf(ncdf_path)
     time_margin_s = float(_data_xr_meta.attrs.get("time_margin_s", 0.0))
-    # Sanitize event_duration: treat missing or non-finite values as None.
+
+    # Sanitize event_duration: prefer explicit event metadata, then fall back to
+    # task-level metadata when exporting chunked data.
     _raw_event_duration = _data_xr_meta.attrs.get("event_duration")
+    if _raw_event_duration is None:
+        _raw_event_duration = _data_xr_meta.attrs.get("task_duration")
+
+    # if _raw_event_duration is None:
+    #     task_events = _data_xr_meta.attrs.get("task_events_structure")
+    #     if isinstance(task_events, str):
+    #         try:
+    #             task_events = json.loads(task_events)
+    #         except (TypeError, ValueError):
+    #             task_events = None
+
+    #     if isinstance(task_events, list) and task_events:
+    #         last_event = task_events[-1]
+    #         if isinstance(last_event, dict):
+    #             start_s = last_event.get("start_s", last_event.get("start"))
+    #             duration_s = last_event.get("duration_s", last_event.get("duration"))
+    #             if start_s is not None and duration_s is not None:
+    #                 _raw_event_duration = float(start_s) + float(duration_s)
+
     try:
         event_duration: Optional[float] = float(_raw_event_duration)
     except (TypeError, ValueError):
@@ -1269,3 +1359,41 @@ def load_output_data(filename: str) -> MultimodalData | None:
     except FileNotFoundError:
         print(f"File not found {filename}")
         return None
+
+def check_exported_data_quality(dyad: str, modality: str, member: str, task: str, export_folder: str) -> bool:
+    """
+    Check the quality of exported data for a given dyad.
+
+    Args:
+        dyad: Dyad ID to check.
+        modality: The modality to check (e.g., 'EEG', 'ECG').
+        export_folder: Path to the folder containing exported data.
+    Returns:
+        saves figure and returns True if the figures were saved
+        
+    """
+    # Read the exported data for the given dyad and modality
+    if member == 'ch':
+        nc_path = os.path.join(export_folder, modality, dyad, 'child', f"{dyad}_{modality}_{member}_{task}.nc")
+    elif member == 'cg':
+        nc_path = os.path.join(export_folder, modality, dyad, 'caregiver', f"{dyad}_{modality}_{member}_{task}.nc")
+    else:
+        raise ValueError(f"Invalid member: {member}. Must be 'ch' or 'cg'.")
+    
+    if modality == 'EEG':
+        # Run AutoReject quality report
+        report = run_eeg_autoreject_quality_report(ncdf_path=str(nc_path))
+        fig = report['figure']
+        ax = report['axis']
+        # create a folder for the figures if it doesn't exist
+        fig_folder = os.path.join(export_folder, modality, 'Quality_reports')
+        if not os.path.exists(fig_folder):
+            os.makedirs(fig_folder)
+        # Save the figure to a file
+        fig_filename = os.path.join(fig_folder, f"{dyad}_{modality}_{member}_{task}_quality_report.png")
+        fig.savefig(fig_filename)
+        print(f"Saved EEG quality report figure to {fig_filename}")
+
+    # Implement the quality check logic here
+    # For now, we'll just return True as a placeholder
+    return True

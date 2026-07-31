@@ -45,7 +45,8 @@ for dyad in dyades_to_export:
                 input_data_path = input_folder,
                 export_path = export_folder,
                 verbose=False)
-        
+        export.check_exported_data_quality(dyad=dyad, modality='EEG', member='ch', task='passive_movies', export_folder=export_folder)
+        export.check_exported_data_quality(dyad=dyad, modality='EEG', member='cg', task='passive_movies', export_folder=export_folder)
         print(f"Done: {dyad}")
     except Exception as e:
         failed_dyads.append((dyad, str(e)))
