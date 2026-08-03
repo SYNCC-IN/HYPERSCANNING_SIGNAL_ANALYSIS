@@ -1,7 +1,6 @@
 from pathlib import Path
 import json
 import warnings
-
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -10,9 +9,8 @@ from IPython.display import Markdown, display
 
 import mne
 from mne.preprocessing import ICA
-
-from src.export import load_eeg_ncdf_as_mne_raw
-from src.export import load_xarray_from_netcdf
+from src.mne_bridge import load_eeg_ncdf_as_mne_raw
+from src.ncdf import load_xarray_from_netcdf
 from src.plot_utils import plot_xarray_signals
 
 
@@ -28,23 +26,7 @@ def _format_component_probabilities(row: pd.Series, short_names: dict | None = N
     return "   ".join(parts)
 
 
-def _build_task_regions_from_xarray(data_xr: xr.DataArray) -> list[dict]:
-    """Build plotting regions from task-event metadata stored on an xarray export."""
-    task_events = data_xr.attrs.get("task_events_structure", [])
-    if isinstance(task_events, str):
-        task_events = json.loads(task_events)
 
-    regions = []
-    for idx, event in enumerate(task_events or []):
-        if not isinstance(event, dict):
-            continue
-        start_s = float(event.get("start_s", 0.0))
-        duration_s = float(event.get("duration_s", 0.0))
-        regions.append({
-            "span": (start_s, start_s + duration_s),
-            "name": str(event.get("name", f"event_{idx + 1}")),
-        })
-    return regions
 
 
 class ICAPreprocessor:
@@ -556,7 +538,6 @@ class ICAPreprocessor:
 
                     fig, _ = plot_xarray_signals(
                         xr_sig,
-                        #regions=_build_task_regions_from_xarray(xr_sig),
                         event_duration=float(xr_sig.attrs.get("task_duration", xr_sig.attrs.get("event_duration", np.nan))),
                         time_margin_s=float(xr_sig.attrs.get("time_margin_s", 0.0)),
                         title=f"{label} — cleaned (excluded: {excluded_names})",

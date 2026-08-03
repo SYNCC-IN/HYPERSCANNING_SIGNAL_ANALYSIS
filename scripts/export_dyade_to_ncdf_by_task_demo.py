@@ -1,21 +1,24 @@
 # %%
-import matplotlib.pyplot as plt
 import sys
 import os
 import importlib
 import numpy as np
+import xarray as xr
+import matplotlib.pyplot as plt
 
 # Add the parent directory to the path to import src as a package
 sys.path.insert(0, os.path.abspath('..'))
 from src import dataloader
-
 importlib.reload(dataloader)
+from src import multimodal_io
+importlib.reload(multimodal_io)
 from src import utils
 importlib.reload(utils)
 from src import export
-
+from src.plot_utils import plot_xarray_signals
 importlib.reload(export)
 from src.export import export_passive_and_talk_data
+from src.mne_bridge import check_exported_data_quality, load_xarray_from_netcdf, get_export_metadata
 
 
 # %% [markdown]
@@ -40,16 +43,13 @@ export_passive_and_talk_data([dyad_id], input_data_path=input_data_path,
                              verbose=True
                              )
 
-export.check_exported_data_quality(dyad=dyad_id, modality='EEG', member='ch', task='passive_movies', export_folder=export_path)
+check_exported_data_quality(dyad=dyad_id, modality='EEG', member='ch', task='passive_movies', export_folder=export_path)
 
 # %% [markdown]
 # # Example of reading from ncdf files containing the chunks to xarray
 
 # %%
 ### Load one exported `.nc` file to xarray (`EEG` / `ECG` / `IBI` / `RMSSD`, `ch`, `Peppa`)
-
-from pprint import pprint
-from src.export import load_xarray_from_netcdf, get_export_metadata
 
 # Selection
 
@@ -76,7 +76,7 @@ metadata = get_export_metadata(data_xr)
 print(f"Loaded: {nc_path}")
 print(data_xr)
 print("Metadata keys:", list(metadata.keys()))
-pprint(metadata, sort_dicts=False)
+
 
 
 # %% [markdown]
@@ -85,37 +85,48 @@ pprint(metadata, sort_dicts=False)
 
 # %%
 time = np.asarray(data_xr.coords["time"].values, dtype=float)
-channels = [str(ch) for ch in data_xr.coords["channel"].values]
-data = np.asarray(data_xr.values, dtype=float)  # shape: (n_samples, n_channels)
 diode_xr = load_xarray_from_netcdf(str(nc_diode_path))
 diode_signal = np.asarray(diode_xr.values, dtype=float)
 
-# Add diode signal as an additional channel to the data array for plotting purposes
-data = np.concatenate([data, 200*diode_signal], axis=1)
-channels.append("diode_signal")
-# Build marker channel from exported event-structure metadata.
-raw_events_structure = data_xr.attrs.get("task_events_structure")
+# Combine EEG channels with diode as an additional channel for visualization.
+data_values = np.asarray(data_xr.values, dtype=float)
+if diode_signal.ndim == 1:
+    diode_signal = diode_signal.reshape(-1, 1)
+elif diode_signal.ndim == 2 and diode_signal.shape[0] == 1:
+    diode_signal = diode_signal.T
 
-event_to_marker = {}
-marker_channel = np.zeros(time.shape[0], dtype=int)
-for idx, ev in enumerate(raw_events_structure, start=1):
-    event_name = str(ev.get("name", f"event_{idx}"))
+combined_values = np.concatenate([data_values, 200 * diode_signal], axis=1)
+channel_names = [str(ch) for ch in data_xr.coords["channel"].values] + ["diode_signal"]
+
+plot_data = xr.DataArray(
+    combined_values,
+    dims=["time", "channel"],
+    coords={"time": time, "channel": channel_names},
+    name="signals",
+)
+plot_data.attrs.update(data_xr.attrs)
+
+regions = []
+colors =["#72c2fa67", "#ff7e0e50", "#2ca02c80"]
+for idx, ev in enumerate(data_xr.attrs.get("task_events_structure", []) or [], start=1):
+    if not isinstance(ev, dict):
+        continue
     start_rel = float(ev.get("start_rel_s", np.nan))
     duration_s = float(ev.get("duration_s", np.nan))
-    end_rel = start_rel + duration_s
-    if np.isfinite(start_rel) and np.isfinite(end_rel):
-        event_to_marker[event_name] = idx
-        marker_channel[(time >= start_rel) & (time <= end_rel)] = idx
+    if np.isfinite(start_rel) and np.isfinite(duration_s):
+        regions.append({
+            "span": (start_rel, start_rel + duration_s),
+            "name": str(ev.get("name", f"event_{idx}")),
+            "color": str(ev.get("color", colors[(idx - 1) % len(colors)])),
+        })
 
-selected_time = [float(time.min()), float(time.max())]
-utils.plot_signal_with_events(
-    time=time,
-    data=data,
-    channels=channels,
-    marker_channel=marker_channel,
-    event_to_marker=event_to_marker,
-    selected_time=selected_time,
+fig, ax = plot_xarray_signals(
+    plot_data,
+    regions=regions,
+    event_duration=float(data_xr.attrs.get("task_duration", np.nan)),
+    time_margin_s=float(data_xr.attrs.get("time_margin_s", 0.0)),
+    title=f"{selected_task} — {selected_member} ({selected_modality})",
 )
-
-print(f"Plotted {len(channels)} channels over {selected_time[0]:.2f}s to {selected_time[1]:.2f}s")
-print(f"Events shown: {list(event_to_marker.keys())}")
+plt.show()
+print(f"Plotted {plot_data.sizes['channel']} channels over {float(time.min()):.2f}s to {float(time.max()):.2f}s")
+print(f"Events shown: {[region['name'] for region in regions]}")

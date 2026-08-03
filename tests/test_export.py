@@ -8,7 +8,7 @@ import pytest
 import xarray as xr
 
 from src.data_structures import MultimodalData
-from src import export
+from src import multimodal_io
 from src import utils
 from src.ica_preprocessing import _build_task_regions_from_xarray, _format_component_probabilities
 
@@ -47,7 +47,7 @@ def multimodal_data_sample():
 
 def test_export_chunk_to_xarray_resets_time_and_stores_events_structure(multimodal_data_sample):
     """Chunk export should reset time at first event and persist events structure metadata."""
-    da = export.export_chunk_to_xarray(
+    da = multimodal_io.export_chunk_to_xarray(
         multimodal_data=multimodal_data_sample,
         selected_events=["Brave", "Peppa", "Incredibles"],
         selected_channels=["Fp1"],
@@ -132,9 +132,9 @@ def test_run_eeg_autoreject_quality_report_uses_task_events_metadata(monkeypatch
         def make_fixed_length_epochs(raw, duration, preload=True, verbose=True):
             return DummyEpochs()
 
-    monkeypatch.setattr(export, "load_xarray_from_netcdf", lambda path: data_xr)
-    monkeypatch.setattr(export, "load_eeg_ncdf_as_mne_raw", lambda **kwargs: DummyRaw())
-    monkeypatch.setattr(export, "plot_eeg_with_rejected_segments", lambda *args, **kwargs: (object(), object()), raising=False)
+    monkeypatch.setattr(multimodal_io, "load_xarray_from_netcdf", lambda path: data_xr)
+    monkeypatch.setattr(multimodal_io, "load_eeg_ncdf_as_mne_raw", lambda **kwargs: DummyRaw())
+    monkeypatch.setattr(multimodal_io, "plot_eeg_with_rejected_segments", lambda *args, **kwargs: (object(), object()), raising=False)
 
     monkeypatch.setitem(__import__("sys").modules, "mne", DummyMneModule())
 
@@ -143,7 +143,7 @@ def test_run_eeg_autoreject_quality_report_uses_task_events_metadata(monkeypatch
 
     monkeypatch.setitem(__import__("sys").modules, "autoreject", DummyAutoRejectModule())
 
-    report = export.run_eeg_autoreject_quality_report(ncdf_path="dummy.nc", verbose=False)
+    report = multimodal_io.run_eeg_autoreject_quality_report(ncdf_path="dummy.nc", verbose=False)
 
     assert report["epoch_summary"]["start_s"].iloc[0] == pytest.approx(0.0)
     assert report["epoch_summary"]["end_s"].iloc[0] == pytest.approx(2.0)
@@ -226,11 +226,11 @@ def test_export_passive_and_talk_data_exports_two_chunks_with_default_margin(
     def fake_to_netcdf(self, path, *args, **kwargs):
         saved_paths.append(path)
 
-    monkeypatch.setattr(export.dataloader, "create_multimodal_data", fake_create_multimodal_data)
-    monkeypatch.setattr(export, "export_chunk_to_xarray", fake_export_chunk_to_xarray)
+    monkeypatch.setattr(multimodal_io.dataloader, "create_multimodal_data", fake_create_multimodal_data)
+    monkeypatch.setattr(multimodal_io, "export_chunk_to_xarray", fake_export_chunk_to_xarray)
     monkeypatch.setattr(xr.DataArray, "to_netcdf", fake_to_netcdf, raising=False)
 
-    export.export_passive_and_talk_data(
+    multimodal_io.export_passive_and_talk_data(
         dyad_id_list=["W_999"],
         export_path=str(tmp_path),
         verbose=False,
@@ -280,11 +280,11 @@ def test_export_passive_and_talk_data_includes_diode_modality_when_present(
     def fake_to_netcdf(self, path, *args, **kwargs):
         saved_paths.append(path)
 
-    monkeypatch.setattr(export.dataloader, "create_multimodal_data", fake_create_multimodal_data)
-    monkeypatch.setattr(export, "export_chunk_to_xarray", fake_export_chunk_to_xarray)
+    monkeypatch.setattr(multimodal_io.dataloader, "create_multimodal_data", fake_create_multimodal_data)
+    monkeypatch.setattr(multimodal_io, "export_chunk_to_xarray", fake_export_chunk_to_xarray)
     monkeypatch.setattr(xr.DataArray, "to_netcdf", fake_to_netcdf, raising=False)
 
-    export.export_passive_and_talk_data(
+    multimodal_io.export_passive_and_talk_data(
         dyad_id_list=["W_999"],
         export_path=str(tmp_path),
         verbose=False,

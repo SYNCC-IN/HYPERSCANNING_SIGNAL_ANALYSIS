@@ -19,8 +19,8 @@ import mne
 
 from . import eyetracker as et
 from .data_structures import MultimodalData, Tasks, WhoEnum
-from .utils import plot_filter_characteristics
-from . import export  # For backwards compatibility
+from .plot_utils import plot_filter_characteristics
+from . import multimodal_io  # For backwards compatibility
 # --------------- ENUM status handler
 def to_status(value):
     if value is None:
@@ -1027,10 +1027,10 @@ def _plot_scanned_events(
 
 # Backwards compatibility wrappers
 def save_to_file(multimodal_data, output_dir):
-    return export.save_to_file(multimodal_data, output_dir)
+    return multimodal_io.save_to_file(multimodal_data, output_dir)
 
 def load_output_data(filename):
-    return export.load_output_data(filename)
+    return multimodal_io.load_output_data(filename)
 
 def get_eeg_data(df, who):
     return MultimodalData.get_eeg_data(df, who)

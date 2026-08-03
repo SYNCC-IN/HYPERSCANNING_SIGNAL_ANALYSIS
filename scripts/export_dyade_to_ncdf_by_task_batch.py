@@ -1,7 +1,5 @@
 # %% [markdown]
 # # Batch export of dyads to NCDF by task
-# %%
-# Import necessary libraries
 import sys
 import os
 import importlib
@@ -11,14 +9,17 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath('..'))
 from src import dataloader
 importlib.reload(dataloader)
-from src import export
-importlib.reload(export)
+from src import multimodal_io
+importlib.reload(multimodal_io)
+from src.export import export_passive_and_talk_data
+from src.mne_bridge import check_exported_data_quality
+
 
 # %% [markdown]
 # # Function to export data for a single dyad
 def export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=None):
         print(f"Exporting {dyad}...")
-        export.export_passive_and_talk_data(
+        export_passive_and_talk_data(
                 dyad_id_list=[dyad],
                 load_eeg=True,
                 load_et=False,
@@ -33,8 +34,8 @@ def export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=None):
                 input_data_path = input_folder,
                 export_path = export_folder,
                 verbose=False)
-        export.check_exported_data_quality(dyad=dyad, modality='EEG', member='ch', task='passive_movies', export_folder=export_folder)
-        export.check_exported_data_quality(dyad=dyad, modality='EEG', member='cg', task='passive_movies', export_folder=export_folder)
+        check_exported_data_quality(dyad=dyad, modality='EEG', member='ch', task='passive_movies', export_folder=export_folder)
+        check_exported_data_quality(dyad=dyad, modality='EEG', member='cg', task='passive_movies', export_folder=export_folder)
         print(f"Done: {dyad}")
 
 
@@ -56,7 +57,6 @@ dyades_to_export = (
     .tolist()
 )
 print(f"Exporting {len(dyades_to_export)} dyads: {dyades_to_export}")
-
 # Loop through each dyad and export the data
 failed_dyads = []
 for dyad in dyades_to_export:
@@ -89,7 +89,8 @@ with open(log_path, "a", encoding="utf-8") as log_file:
 dyad = "W_000"
 EEG_bad_channels_W000 = ['Fp2_cg']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W000)
-
+print(f"Finished special case: {dyad}")
+# %%
 dyad = "W_001"
 EEG_bad_channels_W001 = None  #['P4_cg']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W001)
