@@ -9,6 +9,8 @@ import xarray as xr
 
 from src.data_structures import MultimodalData
 from src import export
+from src import utils
+from src.ica_preprocessing import _build_task_regions_from_xarray, _format_component_probabilities
 
 
 @pytest.fixture
@@ -132,7 +134,7 @@ def test_run_eeg_autoreject_quality_report_uses_task_events_metadata(monkeypatch
 
     monkeypatch.setattr(export, "load_xarray_from_netcdf", lambda path: data_xr)
     monkeypatch.setattr(export, "load_eeg_ncdf_as_mne_raw", lambda **kwargs: DummyRaw())
-    monkeypatch.setattr(export, "plot_eeg_with_rejected_segments", lambda *args, **kwargs: (object(), object()))
+    monkeypatch.setattr(export, "plot_eeg_with_rejected_segments", lambda *args, **kwargs: (object(), object()), raising=False)
 
     monkeypatch.setitem(__import__("sys").modules, "mne", DummyMneModule())
 
@@ -145,6 +147,59 @@ def test_run_eeg_autoreject_quality_report_uses_task_events_metadata(monkeypatch
 
     assert report["epoch_summary"]["start_s"].iloc[0] == pytest.approx(0.0)
     assert report["epoch_summary"]["end_s"].iloc[0] == pytest.approx(2.0)
+
+
+def test_format_component_probabilities_uses_current_row_values():
+    """Probability titles should use the current row's probability columns and labels."""
+    row = pd.Series(
+        {
+            "prob_brain": 0.91,
+            "prob_muscle": 0.03,
+            "prob_eye": 0.02,
+            "prob_heart": 0.01,
+            "prob_line_noise": 0.00,
+            "prob_channel_noise": 0.00,
+            "prob_other": 0.03,
+        },
+        name="component_0",
+    )
+
+    result = _format_component_probabilities(row, short_names={"brain": "brain"})
+
+    assert result == "brain: 0.91   muscle: 0.03   eye: 0.02   heart: 0.01   line_noise: 0.00   channel_noise: 0.00   other: 0.03"
+
+
+def test_plot_xarray_with_regions_handles_2d_data():
+    """The plotting helper should support 2D xarray data with a time dimension."""
+    data = xr.DataArray(
+        np.array([[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]]),
+        coords={"time": np.array([0.0, 1.0, 2.0]), "channel": ["Fp1", "Fp2"]},
+        dims=["channel", "time"],
+    )
+
+    plt = pytest.importorskip("matplotlib.pyplot")
+    with plt.ioff():
+        utils.plot_xarray_with_regions(data, regions=[{"span": (0.0, 2.0), "name": "event"}])
+
+
+def test_build_task_regions_from_xarray_uses_task_events_structure():
+    """Task-event metadata should be converted into plotting regions."""
+    da = xr.DataArray(
+        np.zeros((3, 2)),
+        dims=["time", "channel"],
+        coords={"time": [0.0, 1.0, 2.0], "channel": ["Fp1", "Fp2"]},
+    )
+    da.attrs["task_events_structure"] = [
+        {"name": "Peppa", "start_s": 0.0, "duration_s": 1.0},
+        {"name": "Incredibles", "start_s": 1.5, "duration_s": 0.5},
+    ]
+
+    regions = _build_task_regions_from_xarray(da)
+
+    assert regions == [
+        {"span": (0.0, 1.0), "name": "Peppa"},
+        {"span": (1.5, 2.0), "name": "Incredibles"},
+    ]
 
 
 def test_export_passive_and_talk_data_exports_two_chunks_with_default_margin(

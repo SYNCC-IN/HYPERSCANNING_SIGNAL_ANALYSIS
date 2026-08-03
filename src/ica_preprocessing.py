@@ -11,7 +11,40 @@ from IPython.display import Markdown, display
 import mne
 from mne.preprocessing import ICA
 
-from src.export import load_eeg_ncdf_as_mne_raw, plot_loaded_eeg_signals
+from src.export import load_eeg_ncdf_as_mne_raw
+from src.export import load_xarray_from_netcdf
+from src.plot_utils import plot_xarray_signals
+
+
+def _format_component_probabilities(row: pd.Series, short_names: dict | None = None) -> str:
+    """Format per-component probability columns into a compact title fragment."""
+    short_names = short_names or {}
+    prob_cols = [col for col in row.index if str(col).startswith("prob_")]
+    parts = []
+    for col in prob_cols:
+        class_name = str(col).removeprefix("prob_")
+        label = short_names.get(class_name, class_name)
+        parts.append(f"{label}: {float(row[col]):.2f}")
+    return "   ".join(parts)
+
+
+def _build_task_regions_from_xarray(data_xr: xr.DataArray) -> list[dict]:
+    """Build plotting regions from task-event metadata stored on an xarray export."""
+    task_events = data_xr.attrs.get("task_events_structure", [])
+    if isinstance(task_events, str):
+        task_events = json.loads(task_events)
+
+    regions = []
+    for idx, event in enumerate(task_events or []):
+        if not isinstance(event, dict):
+            continue
+        start_s = float(event.get("start_s", 0.0))
+        duration_s = float(event.get("duration_s", 0.0))
+        regions.append({
+            "span": (start_s, start_s + duration_s),
+            "name": str(event.get("name", f"event_{idx + 1}")),
+        })
+    return regions
 
 
 class ICAPreprocessor:
@@ -131,33 +164,13 @@ class ICAPreprocessor:
             print(f"[Stage 1] Fitting ICA: {ncdf_path.name}")
 
             try:
-                with xr.open_dataarray(ncdf_path) as da:
-                    original_attrs = da.attrs.copy()
-
-                raw = load_eeg_ncdf_as_mne_raw(
+                raw, original_attrs = load_eeg_ncdf_as_mne_raw(
                     str(ncdf_path), montage='standard_1020', scale_to_volts=1e-6
                 )
-                fs = raw.info['sfreq']
-                times = raw.times
                 prov = self._extract_provenance(original_attrs, label)
 
-                out_dir = ica_folder / prov['dyad_id']
+                out_dir = ica_folder / 'ICA_COMPs' / prov['dyad_id']
                 out_dir.mkdir(parents=True, exist_ok=True)
-
-                raw_path = out_dir / f"{label}_raw.nc"
-                xr.DataArray(
-                    data=raw.get_data() * 1e6,
-                    dims=['channel', 'time'],
-                    coords={'channel': raw.ch_names, 'time': times},
-                    name='signals',
-                    attrs=self._sanitize_attrs({
-                        **original_attrs,
-                        **prov,
-                        'file_stem': label,
-                        'sampling_freq': fs,
-                        'processing_history': original_attrs.get('processing_history', '') + ' -> raw_stored_for_ICA',
-                    }),
-                ).to_netcdf(raw_path, engine='netcdf4')
 
                 raw_hp = raw.copy()
                 raw_hp.filter(l_freq=1.0, h_freq=None, verbose='ERROR')
@@ -179,7 +192,7 @@ class ICAPreprocessor:
                 ica_path = out_dir / f"{label}-ica.fif"
                 ica.save(ica_path, overwrite=True)
                 n_actual = int(getattr(ica, 'n_components_', n_components))
-                print(f"  Saved: {raw_path.name}  |  {ica_path.name}  ({n_actual} components)")
+                print(f"  Saved:   {ica_path.name}  ({n_actual} components)") # {raw_path.name}  |
             except Exception as exc:
                 print(f"  [ERROR] {label}: {exc!r} — skipping")
 
@@ -187,14 +200,11 @@ class ICAPreprocessor:
         self,
         ica: "mne.preprocessing.ICA",
         raw_hp: "mne.io.BaseRaw",
-        labels_list: list[str],
-        full_proba: np.ndarray,          # shape (n_comp, 7) — full probability matrix
-        iclabel_classes: list[str],
-        exclude_labels: list[str],
-        iclabel_threshold: float,
+        df: pd.DataFrame,
         label: str,
         save_path: Path,
         timecourse_seconds: float = 30.0,
+        times: np.ndarray | None = None,
     ) -> None:
         """
         Save a QC figure with one row per ICA component:
@@ -203,9 +213,10 @@ class ICAPreprocessor:
 
         Parameters
         ----------
-        full_proba : ndarray, shape (n_comp, 7)
-            Full per-class probability matrix from iclabel_label_components().
-            Column order must match iclabel_classes.
+        df : pd.DataFrame from labels classification, must contain columns:
+            - 'iclabel': predicted ICLabel class for each component
+            - proba_<class>: predicted probability for each of the 7 ICLabel classes
+            - 'auto_exclude': boolean flag indicating whether the component should be automatically excluded
         """
         from matplotlib.gridspec import GridSpec
 
@@ -219,14 +230,14 @@ class ICAPreprocessor:
             'other':          'other',
         }
 
-        n_comp = len(labels_list)
+        n_comp = len(df)
         fs     = raw_hp.info['sfreq']
         A      = ica.get_components()                      # (n_eeg_ch, n_comp)
 
         src_data   = ica.get_sources(raw_hp).get_data()   # (n_comp, n_times)
         n_show     = min(int(timecourse_seconds * fs), src_data.shape[1])
         src_show   = src_data[:, :n_show]
-        times_show = raw_hp.times[:n_show]
+        times_show = times[:n_show]
 
         info_eeg = mne.create_info(ch_names=ica.ch_names, sfreq=fs, ch_types='eeg')
         montage  = mne.channels.make_standard_montage('standard_1020')
@@ -235,28 +246,32 @@ class ICAPreprocessor:
             info_eeg.set_montage(montage, on_missing='ignore', verbose=False)
 
         fig = plt.figure(figsize=(50, n_comp * 2.6))
-        gs  = GridSpec(n_comp, 2, width_ratios=[1, 10], hspace=0.60, wspace=0.12)
+        gs  = GridSpec(
+            n_comp, 2,
+            width_ratios=[1, 10],
+            hspace=0.60,
+            wspace=0.01,    # ← near-zero gap between topo and timecourse columns
+            top=0.98,       # ← pulls top of grid up, removes whitespace above row 0
+            bottom=0.02,
+            left=0.03,
+            right=0.99,
+        )
         fig.suptitle(
             f"{label}  —  ICA component classification  (ICLabel)",
-            fontsize=11, fontweight='bold', y=1.002,
+            fontsize=11, fontweight='bold',
+            y=0.995,        # ← just inside the top margin
         )
 
         for j in range(n_comp):
             ax_topo = fig.add_subplot(gs[j, 0])
             ax_ts   = fig.add_subplot(gs[j, 1])
 
-            predicted = labels_list[j]
-
-            # auto_exclude: predicted class is unwanted AND its probability
-            # meets the threshold (read directly from the full matrix)
-            pred_idx          = iclabel_classes.index(predicted)
-            pred_prob         = float(full_proba[j, pred_idx])
-            auto_exclude      = predicted in exclude_labels and pred_prob >= iclabel_threshold
-
+            predicted = df.loc[j, 'iclabel']
+            auto_exclude = bool(df.loc[j, 'auto_exclude'])
             color = (
-                '#C0392B' if auto_exclude        # red   — excluded
+                "#F61F07" if auto_exclude        # red   — excluded
                 else '#1E8449' if predicted == 'brain'  # green — brain
-                else '#D35400'                          # orange — uncertain
+                else "#F19A61"                          # orange — uncertain
             )
 
             comp_name = f'ICA{j:03d}'
@@ -299,11 +314,7 @@ class ICAPreprocessor:
 
             # ── Title: predicted class + all 7 class probabilities ────────────
             exclude_marker = '✗ EXCLUDE' if auto_exclude else '✓ keep'
-            prob_parts = [
-                f"{SHORT.get(cls, cls)}: {float(full_proba[j, k]):.2f}"
-                for k, cls in enumerate(iclabel_classes)
-            ]
-            prob_str = '   '.join(prob_parts)
+            prob_str = _format_component_probabilities(df.iloc[j], short_names=SHORT)
             ax_ts.set_title(
                 f"{predicted}  [{exclude_marker}]     {prob_str}",
                 fontsize=6.5, pad=3, color=color, loc='left',
@@ -321,6 +332,8 @@ class ICAPreprocessor:
         eog_channels: list[str] | None = None,
         eog_threshold: float = 3.0,
         iclabel_threshold: float = 0.70,
+        brain_threshold: float = 0.50,
+        amplitude_threshold: float = 100, # in microvolts, max abs amplitude of the component in the EEG space
         exclude_labels: list[str] | None = None,
         timecourse_seconds: float = 30.0,
     ) -> None:
@@ -376,20 +389,18 @@ class ICAPreprocessor:
             print(f"[Stage 2] Classifying components: {ncdf_path.name}")
 
             try:
-                with xr.open_dataarray(ncdf_path) as da:
-                    original_attrs = da.attrs.copy()
-                prov    = self._extract_provenance(original_attrs, label)
-                out_dir = ica_folder / prov['dyad_id']
-
+                data_xr = load_xarray_from_netcdf(str(ncdf_path))
+                original_attrs = data_xr.attrs.copy()
+                original_times = np.asarray(data_xr.coords['time'].values, dtype=float)
+                prov = self._extract_provenance(original_attrs, label)
+                raw, _ = load_eeg_ncdf_as_mne_raw(str(ncdf_path), montage='standard_1020', scale_to_volts=1e-6, data_xr=data_xr)
+                out_dir = ica_folder / 'ICA_COMPs' / prov['dyad_id']
                 ica_path = out_dir / f"{label}-ica.fif"
                 if not ica_path.exists():
                     print(f"  [SKIP] missing {ica_path.name} — run fit_and_save_ica first")
                     continue
 
                 ica = mne.preprocessing.read_ica(ica_path)
-                raw = load_eeg_ncdf_as_mne_raw(
-                    str(ncdf_path), montage='standard_1020', scale_to_volts=1e-6
-                )
                 raw_hp = raw.copy()
                 raw_hp.filter(l_freq=1.0, h_freq=None, verbose='ERROR')
 
@@ -419,30 +430,19 @@ class ICAPreprocessor:
                     except Exception:
                         pass
 
-                # ── QC figure (before DataFrame, uses full_proba) ─────────────
-                plot_path = out_dir / f"{label}_ica_classification.png"
-                self._plot_ica_classification(
-                    ica=ica,
-                    raw_hp=raw_hp,
-                    labels_list=labels_list,
-                    full_proba=full_proba,
-                    iclabel_classes=ICLABEL_CLASSES,
-                    exclude_labels=exclude_labels,
-                    iclabel_threshold=iclabel_threshold,
-                    label=label,
-                    save_path=plot_path,
-                    timecourse_seconds=timecourse_seconds,
-                )
-
                 # ── Build DataFrame ───────────────────────────────────────────
                 rows = []
                 for j, comp in enumerate(comp_names):
                     predicted = labels_list[j]
                     pred_prob = float(full_proba[j, pred_indices[j]])
-                    auto_exclude = (
-                        predicted in exclude_labels
-                        and pred_prob >= iclabel_threshold
-                    )
+                    # -- auto_exclude logic: 
+                    #       (predicted class is unwanted  AND its probability and meets the threshold)
+                    #       OR brain is less than the brain_threshold
+                    #       OR max amplitude of the component is greater than the amplitude_threshold
+                    c1 = (predicted in exclude_labels and pred_prob >= iclabel_threshold)
+                    c2 = (full_proba[j, ICLABEL_CLASSES.index('brain')] < brain_threshold)
+                    c3 = (np.max(np.abs(ica.get_sources(raw_hp).get_data()[j])) > amplitude_threshold)
+                    auto_exclude = (c1 or c2 or c3)
                     rows.append({
                         'component':    comp,
                         'iclabel':      predicted,
@@ -456,7 +456,8 @@ class ICAPreprocessor:
                     })
 
                 df = pd.DataFrame(rows)
-                labels_csv = out_dir / f"{label}_ica_labels.csv"
+                labels_csv = ica_folder /'ICA_QC_FIGS_and_CSV' / f"{label}_ica_labels.csv"
+                labels_csv.parent.mkdir(parents=True, exist_ok=True)
                 df.to_csv(labels_csv, index=False, float_format='%.4f')
 
                 n_auto = int(df['auto_exclude'].sum())
@@ -465,9 +466,21 @@ class ICAPreprocessor:
                     df[['component', 'iclabel', 'iclabel_prob', 'auto_exclude']]
                     .to_string(index=False)
                 )
-
+                # ── QC figure (after DataFrame, it uses info from the DataFrame) ─────────────
+                plot_path = ica_folder / 'ICA_QC_FIGS_and_CSV' / f"{label}_ica_classification.png"
+                plot_path.parent.mkdir(parents=True, exist_ok=True)
+                self._plot_ica_classification(
+                    ica=ica,
+                    raw_hp=raw_hp,
+                    df=df,
+                    label=label,
+                    save_path=plot_path,
+                    timecourse_seconds=timecourse_seconds,
+                    times=original_times
+                )
             except Exception as exc:
                 print(f"  [ERROR] {label}: {exc!r} — skipping")
+
     def apply_ica_and_save(
         self,
         ica_folder: Path,
@@ -486,19 +499,15 @@ class ICAPreprocessor:
             print(f"[Stage 3] Applying ICA: {ncdf_path.name}")
 
             try:
-                with xr.open_dataarray(ncdf_path) as da:
-                    original_attrs = da.attrs.copy()
-                    original_name = da.name
+                data_xr = load_xarray_from_netcdf(str(ncdf_path))
+                original_attrs = data_xr.attrs.copy()
+                original_times = np.asarray(data_xr.coords['time'].values, dtype=float)
+                raw, _ = load_eeg_ncdf_as_mne_raw(str(ncdf_path), montage='standard_1020', scale_to_volts=1e-6, data_xr=data_xr)
                 prov = self._extract_provenance(original_attrs, label)
 
-                out_dir_ica = ica_folder / prov['dyad_id']
-                raw_nc_path = out_dir_ica / f"{label}_raw.nc"
+                out_dir_ica = ica_folder / 'ICA_COMPs' / prov['dyad_id']
                 ica_path = out_dir_ica / f"{label}-ica.fif"
-                labels_path = out_dir_ica / f"{label}_ica_labels.csv"
-
-                for p in (raw_nc_path, ica_path, labels_path):
-                    if not p.exists():
-                        raise FileNotFoundError(f"Missing: {p.name}")
+                labels_path = ica_folder / 'ICA_QC_FIGS_and_CSV' / f"{label}_ica_labels.csv"
 
                 ica = mne.preprocessing.read_ica(ica_path)
                 df_labels = pd.read_csv(labels_path)
@@ -509,48 +518,51 @@ class ICAPreprocessor:
 
                 print(f"  Excluding {len(excluded_components)} components: " + ', '.join(f"{n} ({r})" for n, r in zip(excluded_names, excluded_reasons)))
 
-                raw = load_eeg_ncdf_as_mne_raw(str(raw_nc_path), montage='standard_1020', scale_to_volts=1e-6)
+                
                 ica.exclude = excluded_components
                 raw_cleaned = raw.copy()
                 ica.apply(raw_cleaned)
 
                 signals_clean = raw_cleaned.get_data() * 1e6
-                fs = raw.info['sfreq']
-                times = raw.times
+                times = original_times  # Use original times from the NetCDF file
 
+                # Save cleaned signals to NetCDF
                 out_dir_clean = cleaned_folder / prov['dyad_id']
                 out_dir_clean.mkdir(parents=True, exist_ok=True)
                 export_path = out_dir_clean / f"{label}_cleaned.nc"
 
-                xr.DataArray(
+                xr_sig = xr.DataArray(
                     data=signals_clean.T,
                     dims=['time', 'channel'],
                     coords={'time': times, 'channel': raw.ch_names},
-                    name=original_name,
+                    name='signals',
                     attrs=self._sanitize_attrs({
                         **original_attrs,
                         **prov,
                         'file_stem': label,
-                        'sampling_freq': fs,
                         'ica_method': 'infomax_extended_picard',
                         'ica_excluded': str(excluded_names),
                         'ica_excluded_labels': str(excluded_reasons),
                         'processing_history': original_attrs.get('processing_history', '') + ' -> ICA_cleaned',
                     }),
-                ).to_netcdf(export_path, engine='netcdf4')
+                )
+                xr_sig.to_netcdf(export_path, engine='netcdf4')
                 print(f"  Saved cleaned: {export_path.name}")
 
                 if save_plots:
-                    plot_loaded_eeg_signals(
-                        time_s=times,
-                        signals=signals_clean,
-                        channel_names=raw.ch_names,
-                        event_duration_s=times[-1] if len(times) > 0 else 0.0,
+                    plot_dir = cleaned_folder / 'FIGS'
+                    plot_dir.mkdir(parents=True, exist_ok=True)
+                    plot_path = plot_dir / f"{label}_cleaned_plot.png"
+
+                    fig, _ = plot_xarray_signals(
+                        xr_sig,
+                        #regions=_build_task_regions_from_xarray(xr_sig),
+                        event_duration=float(xr_sig.attrs.get("task_duration", xr_sig.attrs.get("event_duration", np.nan))),
+                        time_margin_s=float(xr_sig.attrs.get("time_margin_s", 0.0)),
                         title=f"{label} — cleaned (excluded: {excluded_names})",
                     )
-                    plot_path = out_dir_clean / f"{label}_cleaned_plot.png"
-                    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-                    plt.close()
+                    fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+                    plt.close(fig)
                     print(f"  Saved plot:    {plot_path.name}")
             except Exception as exc:
                 print(f"  [ERROR] {label}: {exc!r} — skipping")

@@ -7,11 +7,72 @@ from plotly.subplots import make_subplots
 from sklearn.decomposition import FastICA
 import scipy.signal as signal   
 import pandas as pd
+import xarray as xr
+
 
 
 
 
 ### PLOTS ####
+
+def plot_xarray_with_regions(xr_dataarray, regions):
+    """
+    Plot a DataArray with events highlighted as background colors.
+
+    Parameters
+    ----------
+    xr_dataarray : xarray.DataArray
+        The data array to plot. The function accepts either a 1D signal or a
+        2D array with a ``time`` dimension and an optional ``channel`` dimension.
+    regions : list of dict
+        List of dictionaries, each containing 'span' (tuple of start_time, end_time)
+        and 'name' (str) for each event region.
+
+    Returns
+    -------
+    None
+        Displays the plot using matplotlib.
+    """
+    if "time" not in xr_dataarray.coords:
+        raise ValueError("xr_dataarray must have a 'time' coordinate.")
+
+    time = np.asarray(xr_dataarray.coords["time"].values, dtype=float)
+    values = np.asarray(xr_dataarray.values)
+
+    if values.ndim == 1:
+        series_list = [values]
+        labels = ["Signal"]
+    elif values.ndim == 2:
+        if values.shape[0] == len(time):
+            series_list = [values[:, idx] for idx in range(values.shape[1])]
+            if "channel" in xr_dataarray.coords:
+                labels = [str(ch) for ch in xr_dataarray.coords["channel"].values]
+            else:
+                labels = [f"Signal {idx + 1}" for idx in range(values.shape[1])]
+        elif values.shape[1] == len(time):
+            series_list = [values[idx, :] for idx in range(values.shape[0])]
+            if "channel" in xr_dataarray.coords:
+                labels = [str(ch) for ch in xr_dataarray.coords["channel"].values]
+            else:
+                labels = [f"Signal {idx + 1}" for idx in range(values.shape[0])]
+        else:
+            raise ValueError("Unable to align 2D data with the time coordinate.")
+    else:
+        raise ValueError("Expected a 1D or 2D DataArray for plotting.")
+
+    plt.figure(figsize=(12, 6))
+    for series, label in zip(series_list, labels):
+        plt.plot(time, series, label=label)
+
+    for region in regions:
+        start, end = region["span"]
+        name = region["name"]
+        plt.axvspan(start, end, alpha=0.3, label=name)
+
+    plt.xlabel("Time (s)")
+    plt.ylabel("Signal")
+    plt.legend()
+    plt.show()
 
 def plot_signal_with_events(time, data, channels, marker_channel, event_to_marker, selected_time):
     """

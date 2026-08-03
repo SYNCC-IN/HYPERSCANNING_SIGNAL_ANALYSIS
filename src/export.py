@@ -9,13 +9,14 @@ import numbers
 import warnings
 import mne
 from dataclasses import asdict, is_dataclass
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Tuple
 
 import joblib
 import xarray as xr
 
 from . import dataloader
 from .data_structures import MultimodalData
+import src.plot_utils as plot_utils
 
 if TYPE_CHECKING:
     import mne
@@ -757,18 +758,7 @@ def get_export_metadata(data_xr: xr.DataArray) -> dict:
     return {}
 
 
-def _infer_sfreq_from_time_coord(time_coord: "np.ndarray") -> float:
-    import numpy as np
 
-    if time_coord.size < 2:
-        raise ValueError("Cannot infer sampling frequency: time coordinate has fewer than 2 samples.")
-
-    dt = np.diff(time_coord.astype(float))
-    dt = dt[dt > 0]
-    if dt.size == 0:
-        raise ValueError("Cannot infer sampling frequency: time deltas are invalid.")
-
-    return float(1.0 / np.median(dt))
 
 
 _EEG_10_20_CHANNELS = frozenset({
@@ -785,7 +775,7 @@ def load_eeg_ncdf_as_mne_raw(
     montage: Optional[str] = "standard_1020",
     scale_to_volts: float = 1e-6,
     data_xr: Optional[xr.DataArray] = None,
-) -> "mne.io.RawArray":
+) -> Tuple["mne.io.RawArray", dict]:
     """Load an exported EEG NetCDF file and convert it to MNE RawArray.
 
     Channel types are assigned as follows:
@@ -802,6 +792,7 @@ def load_eeg_ncdf_as_mne_raw(
 
     Returns:
         mne.io.RawArray: Continuous EEG signal in MNE format.
+        original_attrs: Copy of the original DataArray attributes before any modifications.
     """
     try:
         import mne
@@ -812,6 +803,7 @@ def load_eeg_ncdf_as_mne_raw(
 
     if data_xr is None:
         data_xr = load_xarray_from_netcdf(ncdf_path)
+    original_attrs = data_xr.attrs.copy()
 
     if not isinstance(data_xr, xr.DataArray):
         raise TypeError(f"Expected xarray.DataArray in '{ncdf_path}', got {type(data_xr)}")
@@ -827,9 +819,10 @@ def load_eeg_ncdf_as_mne_raw(
 
     sfreq_attr = data_xr.attrs.get("sampling_freq")
     if sfreq_attr is None or (isinstance(sfreq_attr, str) and not sfreq_attr.strip()):
-        sfreq = _infer_sfreq_from_time_coord(np.asarray(data_xr.coords["time"].values))
+        raise ValueError("Sampling frequency could not be inferred from 'sampling_freq' attribute.")
     else:
-        sfreq = float(sfreq_attr)
+        sfreq = float(sfreq_attr)       
+
 
     # Assign initial channel types: eeg for known 10-20 channels, misc for
     # mastoids, eeg as fallback for anything unrecognised (safe default).
@@ -864,94 +857,7 @@ def load_eeg_ncdf_as_mne_raw(
                 stacklevel=2,
             )
 
-    return raw
-
-
-def plot_eeg_with_rejected_segments(
-    raw: "mne.io.BaseRaw",
-    rejected_windows: Optional["pd.DataFrame"] = None,
-    max_channels: int = 19,
-    spacing: float = 8.0,
-    figsize: tuple[float, float] = (16.0, 9.0),
-    time_offset: float = 0.0,
-    event_duration: Optional[float] = None,
-    time_margin_s: Optional[float] = None,
-):
-    """Plot stacked EEG traces and highlight rejected windows.
-
-    Args:
-        raw: MNE Raw object with EEG channels.
-        rejected_windows: DataFrame with columns ``start_s`` and ``end_s`` in NCDF time coords.
-        max_channels: Maximum number of EEG channels to display.
-        spacing: Vertical distance between channel traces.
-        figsize: Matplotlib figure size.
-        time_offset: First sample time from the NCDF time coordinate (typically negative,
-            equal to -time_margin_s). Used to shift MNE's 0-based time axis to match the
-            original NCDF time axis where 0 = event start.
-        event_duration: Duration of the event in seconds; used to shade the post-event margin.
-        time_margin_s: Margin length in seconds; enables light-gray shading of pre/post margins.
-
-    Returns:
-        tuple: (figure, axis)
-    """
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    picks = raw.copy().pick("eeg")
-    data = picks.get_data()
-    # Shift MNE's 0-based time axis to match the NCDF time coordinate.
-    times = picks.times + time_offset
-    ch_names = list(picks.ch_names)
-
-    if data.size == 0:
-        raise ValueError("No EEG channels available to plot.")
-
-    n_channels = min(max_channels, data.shape[0])
-    data = data[:n_channels]
-    ch_names = ch_names[:n_channels]
-
-    stds = np.std(data,  keepdims=True) # axis=1,
-    # stds[stds == 0] = 1.0
-    normalized = data / stds # normalized to unit variance of all channels 
-                             # for better visual comparison across channels
-
-    fig, ax = plt.subplots(figsize=figsize)
-    offsets = np.arange(n_channels) * spacing
-
-    # Light-gray shading for margin regions (drawn first, behind traces).
-    if time_margin_s is not None and time_margin_s > 0:
-        t_start = float(times[0])
-        t_end = float(times[-1])
-        if t_start < 0.0:
-            ax.axvspan(t_start, 0.0, color="#cccccc", alpha=0.45, zorder=0, label="margin")
-        if event_duration is not None and np.isfinite(event_duration) and t_end > event_duration:
-            ax.axvspan(event_duration, t_end, color="#cccccc", alpha=0.45, zorder=0)
-
-    for idx in range(n_channels):
-        ax.plot(times, normalized[idx] + offsets[idx], linewidth=0.6, color="#1f4f8b", zorder=1)
-
-    if rejected_windows is not None and not rejected_windows.empty:
-        for _, row in rejected_windows.iterrows():
-            ax.axvspan(float(row["start_s"]), float(row["end_s"]), color="#d62728", alpha=0.18, zorder=2)
-
-    # Dashed vertical lines at event boundaries.
-    if event_duration is not None and np.isfinite(event_duration):
-        ax.axvline(0.0, color="#444444", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.axvline(event_duration, color="#444444", linewidth=0.8, linestyle="--", alpha=0.6)
-
-    ax.set_yticks(offsets)
-    ax.set_yticklabels(ch_names)
-    ax.set_xlabel("Time [s]  (0 = event start)")
-    ax.set_ylabel("EEG channel")
-    if "temp" in raw.info:
-        note = str(raw.info["temp"])
-    else:
-        note = ""
-    ax.set_title(f"AutoReject suggested rejections. {note}")
-    ax.grid(axis="x", alpha=0.2)
-    fig.tight_layout()
-    return fig, ax
-
+    return raw, original_attrs
 
 def load_eeg_signals(
     ncdf_path: str,
@@ -992,8 +898,6 @@ def load_eeg_signals(
 
     da = xr.open_dataarray(ncdf_path)
     fs = float(da.attrs.get("sampling_freq", da.attrs.get("sampling_frequency_Hz", 128.0)))
-
-    da_proc = da
 
     if low_cutoff_hz is not None or high_cutoff_hz is not None:
         if "time" not in da.dims or "channel" not in da.dims:
@@ -1068,66 +972,6 @@ def load_eeg_signals(
     da.close()
     return signals, channel_names, fs, time_s, event_duration_s
 
-
-def plot_loaded_eeg_signals(
-    time_s: "np.ndarray",
-    signals: "np.ndarray",
-    channel_names: list,
-    max_channels: int = 19,
-    spacing: float = 8.0,
-    figsize: tuple = (16.0, 9.0),
-    event_duration_s: Optional[float] = None,
-    title: str = "Loaded EEG signal (stacked channels)",
-):
-    """Plot loaded EEG traces in a stacked view analogous to
-    :func:`plot_eeg_with_rejected_segments`.
-
-    Args:
-        time_s: 1-D time axis in seconds (0 = event start).
-        signals: EEG data array of shape ``(n_chan, n_samp)``.
-        channel_names: Ordered channel labels matching ``signals`` rows.
-        max_channels: Maximum number of channels to display.
-        spacing: Vertical distance between channel traces.
-        figsize: Matplotlib figure size ``(width, height)`` in inches.
-        event_duration_s: If given, dashed vertical lines are drawn at
-            ``t = 0`` and ``t = event_duration_s``.
-        title: Figure title.
-
-    Returns:
-        tuple: ``(figure, axis)``
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    n_channels = min(max_channels, signals.shape[0])
-    if n_channels <= 0:
-        raise ValueError("No EEG channels available to plot.")
-
-    data = signals[:n_channels]
-    ch_names = list(channel_names[:n_channels])
-
-    stds = np.std(data, axis=1, keepdims=True)
-    stds[stds == 0] = 1.0
-    normalized = data / stds
-
-    fig, ax = plt.subplots(figsize=figsize)
-    offsets = np.arange(n_channels) * spacing
-
-    for idx in range(n_channels):
-        ax.plot(time_s, normalized[idx] + offsets[idx], linewidth=0.6, color="#1f4f8b", zorder=1)
-
-    if event_duration_s is not None and np.isfinite(event_duration_s):
-        ax.axvline(0.0, color="#444444", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.axvline(event_duration_s, color="#444444", linewidth=0.8, linestyle="--", alpha=0.6)
-
-    ax.set_yticks(offsets)
-    ax.set_yticklabels(ch_names)
-    ax.set_xlabel("Time [s]  (0 = event start)")
-    ax.set_ylabel("EEG channel")
-    ax.set_title(title)
-    ax.grid(axis="x", alpha=0.2)
-    fig.tight_layout()
-    return fig, ax
 
 
 def run_eeg_autoreject_quality_report(
@@ -1394,6 +1238,4 @@ def check_exported_data_quality(dyad: str, modality: str, member: str, task: str
         fig.savefig(fig_filename)
         print(f"Saved EEG quality report figure to {fig_filename}")
 
-    # Implement the quality check logic here
-    # For now, we'll just return True as a placeholder
     return True
