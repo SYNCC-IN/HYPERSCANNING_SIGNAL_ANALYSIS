@@ -10,12 +10,20 @@ import matplotlib.pyplot as plt
 from scipy.signal import butter, sosfiltfilt, hilbert, resample_poly
 from scipy.fft import next_fast_len
 
-from src.mtmvar import (
-    full_freq_dtf,
-    multivariate_spectra,
-    mvar_plot,
-    mvar_criterion,
-)
+try:
+    from .mtmvar import (
+        full_freq_dtf,
+        multivariate_spectra,
+        mvar_plot,
+        mvar_criterion,
+    )
+except ImportError:  # pragma: no cover - fallback for direct script execution
+    from src.mtmvar import (
+        full_freq_dtf,
+        multivariate_spectra,
+        mvar_plot,
+        mvar_criterion,
+    )
 
 
 class EEG_IBI_FFDTF_Pipeline:

@@ -1058,7 +1058,7 @@ def compute_and_plot_mvar(
               when ``optimal_model_order`` is fixed).
             - **p_opt** (*int*): Selected (or provided) model order.
     """
-    from .export import load_eeg_signals, plot_loaded_eeg_signals
+    from .multimodal_io import load_eeg_signals, plot_loaded_eeg_signals
 
     signals, chan_names, fs, time_s, event_duration_s = load_eeg_signals(
         ncdf_path,

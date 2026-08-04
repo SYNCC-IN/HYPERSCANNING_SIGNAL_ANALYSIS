@@ -19,8 +19,8 @@ import mne
 
 from . import eyetracker as et
 from .data_structures import MultimodalData, Tasks, WhoEnum
-from .utils import plot_filter_characteristics
-from . import export  # For backwards compatibility
+from .plot_utils import plot_filter_characteristics
+from . import multimodal_io  # For backwards compatibility
 # --------------- ENUM status handler
 def to_status(value):
     if value is None:
@@ -79,6 +79,7 @@ def create_multimodal_data(
     lowcut=4.0,
     highcut=40.0,
     eeg_filter_type="fir",
+    mounts_eeg=False,
     interpolate_et_during_blinks_threshold=0,
     median_filter_size=64,
     low_pass_et_order=351,
@@ -118,6 +119,7 @@ def create_multimodal_data(
         lowcut (float, optional): Low cut-off frequency for EEG filtering. Defaults to 4.0 Hz.
         highcut (float, optional): High cut-off frequency for EEG filtering. Defaults to 40.0 Hz.
         eeg_filter_type (str, optional): Type of filter to use for EEG data ('fir' or 'iir'). Defaults to 'fir'.
+        mounts_eeg (bool, optional): Whether to mount EEG data to M1 and M2 channels. Defaults to False.
         interpolate_et_during_blinks_threshold (float, optional): Confidence threshold for interpolating ET data during blinks. 0 means no interpolation. Defaults to 0.
         median_filter_size (int, optional): Size of the median filter for ET data processing. Defaults to 64.
         low_pass_et_order (int, optional): Order of the low-pass filter for ET data processing. Defaults to 351.
@@ -183,6 +185,7 @@ def create_multimodal_data(
             highcut=highcut,
             eeg_filter_type=eeg_filter_type,
             window_size=window_size,
+            mounts_eeg=mounts_eeg, # wether to mount EEG data to M1 and M2 channels
             plot_flag=plot_flag,
         )
     if load_et:
@@ -488,6 +491,7 @@ def load_eeg_data(
     highcut=40.0,
     eeg_filter_type="fir",
     window_size=30,
+    mounts_eeg=False,
     plot_flag=False,
 ):
     """Load and filter EEG data from SVAROG format files into MultimodalData instance.
@@ -504,6 +508,7 @@ def load_eeg_data(
         eeg_filter_type (str, optional): Type of filter to use ('fir' or 'iir'). Defaults to 'fir'.
         window_size (float, optional): Sliding window size in seconds used for
             RMSSD computation from ECG. Defaults to 30.
+        mounts_eeg (bool, optional): Whether to mount EEG data to M1 and M2 channels. Defaults to False.
         plot_flag (bool, optional): Whether to plot intermediate results for debugging/visualization. Defaults to False.
 
     Returns:
@@ -540,7 +545,10 @@ def load_eeg_data(
     print(f"Detected events: {multimodal_data.events}")
 
     # mount EEG data to M1 and M2 channels and filter the data (in place)
-    _mount_eeg_data(multimodal_data, raw_eeg_data)
+    if mounts_eeg:
+        _mount_eeg_data(multimodal_data, raw_eeg_data)
+    else:
+        multimodal_data.references = "No EEG montage applied; original reference retained"
     filters = _design_eeg_filters(
         multimodal_data,
         lowcut=lowcut,
@@ -873,6 +881,40 @@ def _scan_for_events(diode, eeg_fs, plot_flag, threshold=0.75):
         tuple: (events, thresholded_diode)
             - events (list[dict]): List of dictionaries with 'name', 'start', 'duration' keys.
             - thresholded_diode (np.ndarray): Binary array of thresholded diode signal.
+
+    How the algorithm works
+
+        The algorithm uses the number of flash pulses within a 4-second sliding window as an identifier for each experimental event. The two key variables are queue (flash start times within the last 4 s) and the assignment events[len(queue) - 2].
+
+        Movies — preceding flash bursts
+
+        Each flash pulse adds its start sample to queue. When a long ON-period (> 55 s, i.e. a movie) is detected, queue contains all preceding flashes plus the start of the movie itself. The mapping events[len(queue) - 2] then resolves as follows:
+
+        len(queue) at movie onset	Assigned event	Preceding flashes
+        2	events[0] = Brave	1 flash
+        3	events[1] = Peppa	2 flashes
+        4	events[2] = Incredibles	3 flashes
+
+        Important: the event start is set to queue[0] — i.e. the first flash onset, not the beginning of the movie signal itself. The reported duration therefore covers the flash burst plus the entire movie.
+
+        Conversation sessions — single trigger flash
+        python
+        duration < 2 * eeg_fs          # short ON-period (< 2 s)
+        following_space > 175 * eeg_fs  # followed by a silence > ~2 min 55 s
+        Event	Pattern
+        Talk_1	1 short flash (< 2 s) → silence > 2:55 = talk
+        Talk_2	1 short flash (< 2 s) → silence > 2:55 = talk
+
+        The conversation start is set to the end of the flash + 1 sample; the duration equals the length of the following silence.
+
+        Diode signal schematic
+        time →
+
+        Brave:        [1 flash]‥‥‥‥‥‥‥‥‥‥[movie ON > 55 s]‥‥‥‥‥‥‥‥‥‥
+        Peppa:        [flash][flash]‥‥‥‥‥‥[movie ON > 55 s]‥‥‥‥‥‥‥‥‥‥
+        Incredibles:  [flash][flash][flash]‥[movie ON > 55 s]‥‥‥‥‥‥‥‥‥‥
+        Talk_1:       [short flash < 2 s][‥‥‥ silence > 175 s = talk ‥‥‥]
+        Talk_2:       [short flash < 2 s][‥‥‥ silence > 175 s = talk ‥‥‥]
     """
     # Binarize the diode signal: values above the threshold become 1, others 0.
     thresholded_diode = ((diode / (threshold * np.max(diode))) > 1).astype(
@@ -985,10 +1027,10 @@ def _plot_scanned_events(
 
 # Backwards compatibility wrappers
 def save_to_file(multimodal_data, output_dir):
-    return export.save_to_file(multimodal_data, output_dir)
+    return multimodal_io.save_to_file(multimodal_data, output_dir)
 
 def load_output_data(filename):
-    return export.load_output_data(filename)
+    return multimodal_io.load_output_data(filename)
 
 def get_eeg_data(df, who):
     return MultimodalData.get_eeg_data(df, who)

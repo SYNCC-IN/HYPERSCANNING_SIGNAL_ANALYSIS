@@ -7,8 +7,13 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from src.data_structures import MultimodalData
 from src import export
+from src import mne_bridge
+from src import multimodal_io
+from src import utils
+from src.data_structures import MultimodalData
+from src.ncdf import _build_task_regions_from_xarray
+from src.ica_preprocessing import _format_component_probabilities
 
 
 @pytest.fixture
@@ -78,6 +83,134 @@ def test_export_chunk_to_xarray_resets_time_and_stores_events_structure(multimod
     assert np.isclose(events_structure[0]["start_rel_s"], 0.0)
     assert np.isclose(events_structure[1]["start_rel_s"], 20.0)
     assert np.isclose(events_structure[2]["start_rel_s"], 40.0)
+
+
+def test_run_eeg_autoreject_quality_report_uses_task_events_metadata(monkeypatch):
+    """Chunk exports should provide a usable event duration via task metadata."""
+    import types
+
+    data_xr = xr.DataArray(
+        np.zeros((3, 1), dtype=float),
+        coords=[np.array([0.0, 0.5, 1.0]), ["Fp1"]],
+        dims=["time", "channel"],
+        name="signals",
+    )
+    data_xr.attrs["time_margin_s"] = 0.5
+    data_xr.attrs["task_duration"] = 1.0
+
+    class DummyRaw:
+        def __init__(self):
+            self.first_samp = 0
+            self.info = {"sfreq": 1.0}
+            self.times = np.array([0.0, 0.5, 1.0], dtype=float)
+            self.ch_names = ["Fp1"]
+
+        def get_data(self, picks=None):
+            return np.zeros((1, 3), dtype=float)
+
+    class DummyEpochs:
+        def __init__(self):
+            self.events = np.array([[0, 0, 0]], dtype=int)
+            self.ch_names = ["Fp1"]
+
+        def __len__(self):
+            return 1
+
+    class DummyAutoReject:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fit(self, epochs):
+            return None
+
+        def transform(self, epochs, return_log=True):
+            class DummyRejectLog:
+                labels = np.array([[0]])
+                bad_epochs = np.array([False])
+
+            return epochs, DummyRejectLog()
+
+    class DummyMneModule(types.SimpleNamespace):
+        @staticmethod
+        def make_fixed_length_epochs(raw, duration, preload=True, verbose=True):
+            return DummyEpochs()
+
+        @staticmethod
+        def pick_types(info, eeg=True):
+            return np.array([0], dtype=int)
+
+    monkeypatch.setattr(mne_bridge, "load_xarray_from_netcdf", lambda path: data_xr)
+    monkeypatch.setattr(
+        mne_bridge,
+        "load_eeg_ncdf_as_mne_raw",
+        lambda **kwargs: (DummyRaw(), {}),
+    )
+    monkeypatch.setattr(mne_bridge, "plot_xarray_signals", lambda *args, **kwargs: (object(), object()))
+
+    monkeypatch.setitem(__import__("sys").modules, "mne", DummyMneModule())
+
+    class DummyAutoRejectModule(types.SimpleNamespace):
+        AutoReject = DummyAutoReject
+
+    monkeypatch.setitem(__import__("sys").modules, "autoreject", DummyAutoRejectModule())
+
+    report = mne_bridge.run_eeg_autoreject_quality_report(ncdf_path="dummy.nc", verbose=False)
+
+    assert report["epoch_summary"]["start_s"].iloc[0] == pytest.approx(0.0)
+    assert report["epoch_summary"]["end_s"].iloc[0] == pytest.approx(2.0)
+
+
+def test_format_component_probabilities_uses_current_row_values():
+    """Probability titles should use the current row's probability columns and labels."""
+    row = pd.Series(
+        {
+            "prob_brain": 0.91,
+            "prob_muscle": 0.03,
+            "prob_eye": 0.02,
+            "prob_heart": 0.01,
+            "prob_line_noise": 0.00,
+            "prob_channel_noise": 0.00,
+            "prob_other": 0.03,
+        },
+        name="component_0",
+    )
+
+    result = _format_component_probabilities(row, short_names={"brain": "brain"})
+
+    assert result == "brain: 0.91   muscle: 0.03   eye: 0.02   heart: 0.01   line_noise: 0.00   channel_noise: 0.00   other: 0.03"
+
+
+def test_plot_xarray_with_regions_handles_2d_data():
+    """The plotting helper should support 2D xarray data with a time dimension."""
+    data = xr.DataArray(
+        np.array([[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]]),
+        coords={"time": np.array([0.0, 1.0, 2.0]), "channel": ["Fp1", "Fp2"]},
+        dims=["channel", "time"],
+    )
+
+    plt = pytest.importorskip("matplotlib.pyplot")
+    with plt.ioff():
+        utils.plot_xarray_with_regions(data, regions=[{"span": (0.0, 2.0), "name": "event"}])
+
+
+def test_build_task_regions_from_xarray_uses_task_events_structure():
+    """Task-event metadata should be converted into plotting regions."""
+    da = xr.DataArray(
+        np.zeros((3, 2)),
+        dims=["time", "channel"],
+        coords={"time": [0.0, 1.0, 2.0], "channel": ["Fp1", "Fp2"]},
+    )
+    da.attrs["task_events_structure"] = [
+        {"name": "Peppa", "start_s": 0.0, "duration_s": 1.0},
+        {"name": "Incredibles", "start_s": 1.5, "duration_s": 0.5},
+    ]
+
+    regions = _build_task_regions_from_xarray(da)
+
+    assert regions == [
+        {"span": (0.0, 1.0), "name": "Peppa"},
+        {"span": (1.5, 2.0), "name": "Incredibles"},
+    ]
 
 
 def test_export_passive_and_talk_data_exports_two_chunks_with_default_margin(
