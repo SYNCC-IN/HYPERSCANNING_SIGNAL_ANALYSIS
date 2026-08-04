@@ -147,51 +147,51 @@ def load_eeg_signals(
     import numpy as np
     from scipy.signal import butter, filtfilt, iirnotch
 
-da = xr.open_dataarray(ncdf_path)
-fs = float(da.attrs.get("sampling_freq", da.attrs.get("sampling_frequency_Hz", 128.0)))
-da_proc = da
-        if "time" not in da.dims or "channel" not in da.dims:
-            raise ValueError(
-                f"Expected 'time' and 'channel' dimensions in {ncdf_path}, got {da.dims}"
-            )
-
-        data_tc = da.transpose("time", "channel").values.astype(np.float64)
-        nyquist = fs / 2.0
-
-        if low_cutoff_hz is not None:
-            wn_hp = float(low_cutoff_hz) / nyquist
-            if not 0.0 < wn_hp < 1.0:
-                raise ValueError(
-                    f"Invalid low_cutoff_hz={low_cutoff_hz}. "
-                    f"Must satisfy 0 < cutoff < {nyquist:.3f} Hz."
-                )
-            b_hp, a_hp = butter(4, wn_hp, btype="highpass")
-            data_tc = filtfilt(b_hp, a_hp, data_tc, axis=0)
-
-        if high_cutoff_hz is not None:
-            wn_lp = float(high_cutoff_hz) / nyquist
-            if not 0.0 < wn_lp < 1.0:
-                raise ValueError(
-                    f"Invalid high_cutoff_hz={high_cutoff_hz}. "
-                    f"Must satisfy 0 < cutoff < {nyquist:.3f} Hz."
-                )
-            b_lp, a_lp = butter(4, wn_lp, btype="lowpass")
-            data_tc = filtfilt(b_lp, a_lp, data_tc, axis=0)
-
-        notch_freq = 50.0
-        if notch_freq < nyquist:
-            b_n, a_n = iirnotch(notch_freq, Q=15, fs=fs)
-            data_tc = filtfilt(b_n, a_n, data_tc, axis=0)
-
-        da_proc = xr.DataArray(
-            data_tc,
-            dims=("time", "channel"),
-            coords={
-                "time": da.coords["time"].values,
-                "channel": da.coords["channel"].values,
-            },
-            attrs=da.attrs,
+    da = xr.open_dataarray(ncdf_path)
+    fs = float(da.attrs.get("sampling_freq", da.attrs.get("sampling_frequency_Hz", 128.0)))
+    da_proc = da
+    if "time" not in da.dims or "channel" not in da.dims:
+        raise ValueError(
+            f"Expected 'time' and 'channel' dimensions in {ncdf_path}, got {da.dims}"
         )
+
+    data_tc = da.transpose("time", "channel").values.astype(np.float64)
+    nyquist = fs / 2.0
+
+    if low_cutoff_hz is not None:
+        wn_hp = float(low_cutoff_hz) / nyquist
+        if not 0.0 < wn_hp < 1.0:
+            raise ValueError(
+                f"Invalid low_cutoff_hz={low_cutoff_hz}. "
+                f"Must satisfy 0 < cutoff < {nyquist:.3f} Hz."
+            )
+        b_hp, a_hp = butter(4, wn_hp, btype="highpass")
+        data_tc = filtfilt(b_hp, a_hp, data_tc, axis=0)
+
+    if high_cutoff_hz is not None:
+        wn_lp = float(high_cutoff_hz) / nyquist
+        if not 0.0 < wn_lp < 1.0:
+            raise ValueError(
+                f"Invalid high_cutoff_hz={high_cutoff_hz}. "
+                f"Must satisfy 0 < cutoff < {nyquist:.3f} Hz."
+            )
+        b_lp, a_lp = butter(4, wn_lp, btype="lowpass")
+        data_tc = filtfilt(b_lp, a_lp, data_tc, axis=0)
+
+    notch_freq = 50.0
+    if notch_freq < nyquist:
+        b_n, a_n = iirnotch(notch_freq, Q=15, fs=fs)
+        data_tc = filtfilt(b_n, a_n, data_tc, axis=0)
+
+    da_proc = xr.DataArray(
+        data_tc,
+        dims=("time", "channel"),
+        coords={
+            "time": da.coords["time"].values,
+            "channel": da.coords["channel"].values,
+        },
+        attrs=da.attrs,
+    )
 
     t = da_proc.coords["time"].values
     event_duration_s = float(da_proc.attrs.get("event_duration", t[-1]))
