@@ -10,7 +10,8 @@ import xarray as xr
 from src.data_structures import MultimodalData
 from src import multimodal_io
 from src import utils
-from src.ica_preprocessing import _build_task_regions_from_xarray, _format_component_probabilities
+from src.ncdf import _build_task_regions_from_xarray
+from src.ica_preprocessing import _format_component_probabilities
 
 
 @pytest.fixture
