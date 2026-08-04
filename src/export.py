@@ -9,8 +9,7 @@ import numpy as np
 import xarray as xr
 
 from .ncdf import _sanitize_netcdf_attrs_inplace
-from src import dataloader
-
+from . import dataloader
 
 # ── Old-style 10-20 names that MNE's standard_1020 montage does not recognise ──
 _OLD_TO_MNE = {'T3': 'T7', 'T4': 'T8', 'T5': 'P7', 'T6': 'P8'}
