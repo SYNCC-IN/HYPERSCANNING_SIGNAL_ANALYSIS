@@ -345,7 +345,7 @@ def _build_export_metadata(multimodal_data, selected_modality):
     metadata = {
         "notes":       getattr(multimodal_data, "notes", ""),
         "child_info":  _dataclass_or_dict(getattr(multimodal_data, "child_info", {})),
-        "event_order": event_order,          # ← przywrócone
+        "event_order": event_order,         
     }
     if selected_modality == 'EEG':
         metadata["eeg"] = {
