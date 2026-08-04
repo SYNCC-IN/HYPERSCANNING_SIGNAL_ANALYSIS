@@ -9,9 +9,15 @@ from IPython.display import Markdown, display
 
 import mne
 from mne.preprocessing import ICA
-from src.mne_bridge import load_eeg_ncdf_as_mne_raw
-from src.ncdf import load_xarray_from_netcdf
-from src.plot_utils import plot_xarray_signals
+
+try:
+    from .mne_bridge import load_eeg_ncdf_as_mne_raw
+    from .ncdf import load_xarray_from_netcdf
+    from .plot_utils import plot_xarray_signals
+except ImportError:  # pragma: no cover - fallback for direct script execution
+    from src.mne_bridge import load_eeg_ncdf_as_mne_raw
+    from src.ncdf import load_xarray_from_netcdf
+    from src.plot_utils import plot_xarray_signals
 
 
 def _format_component_probabilities(row: pd.Series, short_names: dict | None = None) -> str:

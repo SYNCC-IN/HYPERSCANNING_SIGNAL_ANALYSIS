@@ -2,11 +2,15 @@ import os
 import warnings
 from pathlib import Path
 from typing import Optional, Tuple
-import xarray as xr
-from .ncdf import load_xarray_from_netcdf, get_export_metadata
 import numpy as np
 import xarray as xr
-from src.plot_utils import plot_xarray_signals
+
+try:
+    from .ncdf import load_xarray_from_netcdf, get_export_metadata
+    from .plot_utils import plot_xarray_signals
+except ImportError:  # pragma: no cover - fallback for direct script execution
+    from src.ncdf import load_xarray_from_netcdf, get_export_metadata
+    from src.plot_utils import plot_xarray_signals
 
 _EEG_10_20_CHANNELS = frozenset({
     'Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
