@@ -147,10 +147,9 @@ def load_eeg_signals(
     import numpy as np
     from scipy.signal import butter, filtfilt, iirnotch
 
-    da = xr.open_dataarray(ncdf_path)
-    fs = float(da.attrs.get("sampling_freq", da.attrs.get("sampling_frequency_Hz", 128.0)))
-
-    if low_cutoff_hz is not None or high_cutoff_hz is not None:
+da = xr.open_dataarray(ncdf_path)
+fs = float(da.attrs.get("sampling_freq", da.attrs.get("sampling_frequency_Hz", 128.0)))
+da_proc = da
         if "time" not in da.dims or "channel" not in da.dims:
             raise ValueError(
                 f"Expected 'time' and 'channel' dimensions in {ncdf_path}, got {da.dims}"
