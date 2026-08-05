@@ -63,7 +63,7 @@ def export_chunk_to_xarray(
     return _build_dataarray(
         time, channels, data,
         multimodal_data, ordered_events, chunk_start, chunk_end,
-        chunk_name, time_margin, member, metadata
+        chunk_name, time_margin, member, selected_modality, metadata
     )
 
 
@@ -244,7 +244,7 @@ def _apply_eeg_montage(
 def _build_dataarray(
     time, channels, data,
     multimodal_data, ordered_events, chunk_start, chunk_end,
-    chunk_name, time_margin, member, metadata
+    chunk_name, time_margin, member, modality, metadata
 ) -> xr.DataArray:
     """Assemble the final annotated xarray DataArray."""
     events_structure = _build_events_structure(
@@ -256,9 +256,20 @@ def _build_dataarray(
         dims=['time', 'channel'],
         name='signals',
     )
+    units = "unknown"
+    if modality == 'EEG' or modality == 'ECG':
+        units = "μV"
+    elif modality == 'ET':
+        units = "px"
+    elif modality == 'IBI' or modality == 'RMSSD':  
+        units = "ms"
+
+  
     da.attrs.update({
         'dyad_id':               multimodal_data.id,
         'who':                   member,
+         "modality":             modality,
+         "units":                units,
         'sampling_freq':         float(multimodal_data.fs),
         'task_name':             chunk_name,
         'task_start':            0.0,
@@ -344,7 +355,7 @@ def _build_export_metadata(multimodal_data, selected_modality):
     metadata = {
         "notes":       getattr(multimodal_data, "notes", ""),
         "child_info":  _dataclass_or_dict(getattr(multimodal_data, "child_info", {})),
-        "event_order": event_order,         
+        "event_order": event_order,
     }
     if selected_modality == 'EEG':
         metadata["eeg"] = {

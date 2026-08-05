@@ -54,9 +54,11 @@ def plot_xarray_signals(
         Vertical offset between stacked traces (in normalised units).
         Ignored when stacked=False.
     normalize : bool
-        Divide each channel by its standard deviation before plotting.
-        Useful for stacked EEG; set to False for IBI / RMSSD where the
-        absolute scale is meaningful.
+        Divide every channel by the **median per-channel standard deviation**
+        across all displayed channels.  This preserves relative amplitude
+        differences between channels while bringing the overall scale into a
+        convenient range.  Set to False for IBI / RMSSD where the absolute
+        scale is meaningful.
     figsize : (float, float)
         Matplotlib figure size in inches.
     event_duration : float, optional
@@ -101,7 +103,7 @@ def plot_xarray_signals(
         ibi_xr,
         stacked=False,
         normalize=False,
-        ylabel="IBI (s)",
+        ylabel="IBI (ms)",
         title="Inter-beat intervals",
     )
     """
@@ -113,6 +115,8 @@ def plot_xarray_signals(
         raise ValueError("data_xr must have a 'time' coordinate.")
 
     time = np.asarray(data_xr.coords["time"].values, dtype=float)
+    units = data_xr.attrs.get("units", "unknown")
+    modality = data_xr.attrs.get("modality", "Signal")
 
     # ── Reshape to (n_channels, n_times) ─────────────────────────────────────
     values = np.asarray(data_xr.values)
@@ -148,10 +152,14 @@ def plot_xarray_signals(
         stacked = n_channels > 1
 
     # ── Normalise ─────────────────────────────────────────────────────────────
+    # All channels are divided by the same factor (median per-channel std)
+    # so that relative amplitudes between channels are preserved.
     if normalize:
-        stds = np.std(values, axis=1, keepdims=True)
-        stds[stds == 0] = 1.0
-        plot_values = values / stds
+        per_ch_stds = np.std(values, axis=1)          # (n_channels,)
+        valid = per_ch_stds[per_ch_stds > 0]
+        global_scale = float(np.median(valid)) if valid.size else 1.0
+        plot_values = values / global_scale
+        units = "normalized"
     else:
         plot_values = values.copy()
 
@@ -184,10 +192,6 @@ def plot_xarray_signals(
                        zorder=2, label=label_arg)
             if name:
                 seen_labels.add(name)
-            # Render the event name as text centred on the span,
-            # pinned to the top of the axes in axes-fraction y-coords.
-            # get_xaxis_transform(): x in data coords, y in axes fraction —
-            # so the label stays at the top regardless of y-axis scale.
             if name:
                 ax.text(
                     (start + end) / 2,
@@ -217,16 +221,16 @@ def plot_xarray_signals(
         ax.set_yticks(offsets)
         ax.set_yticklabels(ch_names)
 
-        # ── 50 μV scale bar — left edge of the bottom trace ──────────────────
-        # Blended transform: x in axes-fraction coords (pinned to left wall),
-        # y in data coords (so the height correctly represents 50 μV).
+        # ── 50 μV scale bar ───────────────────────────────────────────────────
+        # Height is computed from the same global_scale used for normalisation,
+        # so the bar correctly represents 50 μV regardless of which channel
+        # sits at the bottom.
         from matplotlib.transforms import blended_transform_factory
 
         scale_uv = 50.0
         if normalize:
-            # Signal was divided by its std, so 50 μV maps to 50/std plot units.
-            std_bottom = float(np.std(values[0]))
-            scale_height = scale_uv / std_bottom if std_bottom > 0 else scale_uv
+            # global_scale has units of μV → divide to get normalised height
+            scale_height = scale_uv / global_scale
         else:
             scale_height = scale_uv          # raw μV space — direct mapping
 
@@ -258,7 +262,7 @@ def plot_xarray_signals(
                     linewidth=linewidth, label=name, zorder=1)
         if n_channels > 1:
             ax.legend(fontsize=8, loc="upper right")
-        _ylabel = ylabel or (str(data_xr.name) if data_xr.name else "Value")
+        _ylabel = ylabel or f"{modality} ({units})"
 
     # ── Axes labels ───────────────────────────────────────────────────────────
     ax.set_xlabel(xlabel)
@@ -267,9 +271,6 @@ def plot_xarray_signals(
     ax.grid(axis="x", alpha=0.2)
     fig.tight_layout()
     return fig, ax
-
-
-
 # ==================================
 
 def plot_filter_characteristics(b, a, f, T, Fs, f_lim=None, db_lim=None):

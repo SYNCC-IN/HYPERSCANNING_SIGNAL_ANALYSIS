@@ -15,9 +15,10 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
     from src.ncdf import load_ncdf, task_regions
     from src.plot_utils import plot_xarray_signals
 
-ncdf_file_path = Path("/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/RMSSD/W_000/child/W_000_RMSSD_ch_passive_movies.nc")  # noqa: E501
+ncdf_file_path = Path("/Users/admin/Documents/Hoza/PROJEKTY/SYNCC_IN_LOCAL_HOME/hyperscanning-signal-analysis/data/UNIWAW_imported/EEG/W_030/caregiver/W_030_EEG_cg_passive_movies.nc")  # noqa: E501
+#Path("/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/RMSSD/W_000/child/W_000_RMSSD_ch_passive_movies.nc")  # noqa: E501
 #Path("/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/ICA_output/EEG_ICA_CLEANED/W_000/W_000_EEG_ch_passive_movies_cleaned.nc")
-modality = Path(ncdf_file_path).stem.split('_')[2]   # 'EEG', 'ECG', 'IBI', 'RMSSD', 'ET'
+#modality = Path(ncdf_file_path).stem.split('_')[2]   # 'EEG', 'ECG', 'IBI', 'RMSSD', 'ET'
 # ── load ─────────────────────────────────────────────────────────────────
 data_xr = load_ncdf(ncdf_file_path)
 
@@ -30,6 +31,7 @@ time_margin_s  = float(data_xr.attrs.get("time_margin_s", 0.0))
 dyad_id        = data_xr.attrs.get("dyad_id", "")
 who            = data_xr.attrs.get("who", "")
 task           = data_xr.attrs.get("task_name", ncdf_file_path.stem)
+modality       = data_xr.attrs.get("modality", "unknown")
 
 title = f"{dyad_id}  {who}  —  {task} {modality}"
 
@@ -39,7 +41,8 @@ fig, ax = plot_xarray_signals(
     regions=regions,
     event_duration=event_duration if np.isfinite(event_duration) else None,
     time_margin_s=time_margin_s,
-    normalize= True,
+    normalize= True,  # normalize each channel to zero mean and unit variance
+    #stacked=True,  # stack channels vertically
     title=title,
 )
 
