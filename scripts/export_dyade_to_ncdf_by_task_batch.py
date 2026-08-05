@@ -47,6 +47,9 @@ export_folder = "/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.
 # load the metadata file to get the list of all dyads and their corresponding movie durations
 metadata_file = os.path.join(input_folder, "meta_data.csv")
 metadata_df = pd.read_csv(metadata_file, sep=';')
+
+
+
 # %% [markdown]
 # #  Standard export for all dyads with EEG Passive == 1.0 
 # create dyades_to_export from metadata rows with EEG Passive == 1.0
