@@ -166,6 +166,7 @@ class ICAPreprocessor:
                 ica = ICA(
                     n_components=n_components,
                     method='infomax',
+                    fit_params=dict(extended=True),
                     random_state=42,
                     max_iter=max_iter,
                 )
@@ -258,7 +259,7 @@ class ICAPreprocessor:
             auto_exclude = bool(df.loc[j, 'auto_exclude'])
             color = (
                 "#F61F07" if auto_exclude        # red   — excluded
-                else '#1E8449' if predicted == 'brain'  # green — brain
+                else '#1E8449' if predicted == 'brain' or predicted == 'other'  # green — brain
                 else "#F19A61"                          # orange — uncertain
             )
 
@@ -428,7 +429,7 @@ class ICAPreprocessor:
                     #       OR brain is less than the brain_threshold
                     #       OR max amplitude of the component is greater than the amplitude_threshold
                     c1 = (predicted in exclude_labels and pred_prob >= iclabel_threshold)
-                    c2 = (full_proba[j, ICLABEL_CLASSES.index('brain')] < brain_threshold)
+                    c2 = (full_proba[j, ICLABEL_CLASSES.index('brain')] < brain_threshold and full_proba[j, ICLABEL_CLASSES.index('other')] < brain_threshold)
                     c3 = (np.max(np.abs(ica.get_sources(raw_hp).get_data()[j])) > amplitude_threshold)
                     auto_exclude = (c1 or c2 or c3)
                     rows.append({
