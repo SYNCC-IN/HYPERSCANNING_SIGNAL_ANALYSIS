@@ -700,7 +700,7 @@ def _design_eeg_filters(
         high_order = numtaps_high - 1
         f_type = "firwin"
     else:
-        butter_order = 4
+        butter_order = 2
         b_low, a_low = butter(
             N=butter_order, Wn=highcut, btype="low", fs=multimodal_data.fs
         )

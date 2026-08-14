@@ -205,6 +205,8 @@ def _apply_eeg_montage(
     raw      = mne.io.RawArray(data.T * 1e-6, info, verbose=False)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
+        rename = {'T3': 'T7', 'T4': 'T8', 'T5': 'P7', 'T6': 'P8'}
+        raw.rename_channels({k: v for k, v in rename.items() if k in raw.ch_names})
         raw.set_montage('standard_1020', on_missing='ignore', verbose=False)
 
     # ── Step 1: interpolate bad channels ─────────────────────────────────────

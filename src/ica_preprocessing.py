@@ -161,10 +161,10 @@ class ICAPreprocessor:
                 out_dir.mkdir(parents=True, exist_ok=True)
 
                 raw_hp = raw.copy()
-                raw_hp.filter(l_freq=1.0, h_freq=None, verbose='ERROR')
-
+                raw_hp.filter(l_freq=1.0, h_freq=100, verbose='ERROR')
+                rank = mne.compute_rank(raw_hp, rank='info')['eeg']  # data-based SVD catches interp + CAR
                 ica = ICA(
-                    n_components=n_components,
+                    n_components=min(n_components, rank),
                     method='infomax',
                     fit_params=dict(extended=True),
                     random_state=42,
@@ -174,7 +174,7 @@ class ICAPreprocessor:
                     warnings.filterwarnings('ignore', category=RuntimeWarning, module='mne')
                     old_lvl = mne.set_log_level('ERROR', return_old_level=True)
                     try:
-                        ica.fit(raw_hp, picks='eeg', verbose='ERROR')
+                        ica.fit(raw_hp, picks='eeg', reject=dict(eeg=500e-6), reject_by_annotation=True, verbose='ERROR')
                     finally:
                         mne.set_log_level(old_lvl)
 
@@ -226,6 +226,12 @@ class ICAPreprocessor:
         src_data   = ica.get_sources(raw_hp).get_data()   # (n_comp, n_times)
         n_show     = min(int(timecourse_seconds * fs), src_data.shape[1])
         src_show   = src_data[:, :n_show]
+        src_show /= np.max(np.abs(src_show), axis=1)[:, None]  # normalize each component to [-1, 1]
+        
+        for j in range(n_comp):
+            amps = np.max(np.abs(ica.apply(raw_hp.copy(), include=[j]).get_data()[:, :n_show] * 1e6  ))# projected component in microvolts
+            src_show[j] *= amps  # scale time course to match projected amplitude
+        
         times_show = times[:n_show]
 
         info_eeg = mne.create_info(ch_names=ica.ch_names, sfreq=fs, ch_types='eeg')
@@ -322,6 +328,7 @@ class ICAPreprocessor:
         eog_threshold: float = 3.0,
         iclabel_threshold: float = 0.70,
         brain_threshold: float = 0.50,
+        keep_threshold: float = 0.50,
         amplitude_threshold: float = 100, # in microvolts, max abs amplitude of the component in the EEG space
         exclude_labels: list[str] | None = None,
         timecourse_seconds: float = 30.0,
@@ -368,7 +375,8 @@ class ICAPreprocessor:
             'channel noise':   'prob_channel_noise',
             'other':           'prob_other',
         }
-
+        brain_idx = ICLABEL_CLASSES.index('brain')
+        other_idx = ICLABEL_CLASSES.index('other')
         if not self.eeg_files:
             raise RuntimeError("No EEG files loaded. Call find_eeg_files() first.")
 
@@ -420,18 +428,32 @@ class ICAPreprocessor:
                         pass
 
                 # ── Build DataFrame ───────────────────────────────────────────
+                source_data = ica.get_sources(raw_hp).get_data()  # (n_comp, n_times)
+                mixing_matrix = ica.mixing_matrix_                       # (n_channels, n_comp)
                 rows = []
                 for j, comp in enumerate(comp_names):
                     predicted = labels_list[j]
                     pred_prob = float(full_proba[j, pred_indices[j]])
-                    # -- auto_exclude logic: 
-                    #       (predicted class is unwanted  AND its probability and meets the threshold)
-                    #       OR brain is less than the brain_threshold
-                    #       OR max amplitude of the component is greater than the amplitude_threshold
-                    c1 = (predicted in exclude_labels and pred_prob >= iclabel_threshold)
-                    c2 = (full_proba[j, ICLABEL_CLASSES.index('brain')] < brain_threshold and full_proba[j, ICLABEL_CLASSES.index('other')] < brain_threshold)
-                    c3 = (np.max(np.abs(ica.get_sources(raw_hp).get_data()[j])) > amplitude_threshold)
-                    auto_exclude = (c1 or c2 or c3)
+                    only_j = ica.apply(raw_hp.copy(), include=[j])   # zeruje pozostałe składowe
+                    projected_j = only_j.get_data() *1e6                # wkład komp. j w jednostkach danych
+                    max_projected_amp = float(np.max(np.abs(projected_j)))
+
+                    p_brain = float(full_proba[j, brain_idx])
+                    p_other = float(full_proba[j, other_idx])
+                    p_neural = p_brain + p_other        # mass ICLabel puts on "leave it in"
+
+                    # c1 — confident artifact: argmax is an unwanted class AND ICLabel is sure
+                    c1 = (predicted in exclude_labels) and (pred_prob >= iclabel_threshold)
+
+                    # c2 — not confidently neural: too little combined brain+other mass to trust
+                    c2 = (p_neural < keep_threshold)
+
+                    # c3 — amplitude VETO, not an override: abnormally large back-projection,
+                    #      but only fires when it isn't a confident brain component
+                    #      (protects alpha bursts, slow waves, epileptiform discharges)
+                    c3 = (max_projected_amp > amplitude_threshold) and (p_brain < brain_threshold)
+
+                    auto_exclude = c1 or c2 or c3
                     rows.append({
                         'component':    comp,
                         'iclabel':      predicted,
@@ -439,6 +461,7 @@ class ICAPreprocessor:
                         **{COL_MAP[cls]: float(full_proba[j, k])
                            for k, cls in enumerate(ICLABEL_CLASSES)},
                         'eog_score':    float(eog_scores[j]),
+                        'max_projected_amp': max_projected_amp,
                         'auto_exclude': auto_exclude,
                         'exclude':      auto_exclude,      # user edits this column
                         'notes':        '',

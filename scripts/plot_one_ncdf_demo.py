@@ -15,7 +15,9 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
     from src.ncdf import load_ncdf, task_regions
     from src.plot_utils import plot_xarray_signals
 
-ncdf_file_path = Path("/Users/admin/Documents/Hoza/PROJEKTY/SYNCC_IN_LOCAL_HOME/hyperscanning-signal-analysis/data/UNIWAW_imported/EEG/W_030/caregiver/W_030_EEG_cg_passive_movies.nc")  # noqa: E501
+ncdf_file_path = Path('/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/EEG/W_019/child/W_019_EEG_ch_passive_movies.nc')  # noqa: E501
+    #'/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/ICA_output/EEG_ICA_CLEANED/W_019/W_019_EEG_ch_passive_movies_cleaned.nc')
+#Path("/Users/admin/Documents/Hoza/PROJEKTY/SYNCC_IN_LOCAL_HOME/hyperscanning-signal-analysis/data/UNIWAW_imported/EEG/W_030/caregiver/W_030_EEG_cg_passive_movies.nc")  # noqa: E501
 #Path("/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/RMSSD/W_000/child/W_000_RMSSD_ch_passive_movies.nc")  # noqa: E501
 #Path("/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/ICA_output/EEG_ICA_CLEANED/W_000/W_000_EEG_ch_passive_movies_cleaned.nc")
 #modality = Path(ncdf_file_path).stem.split('_')[2]   # 'EEG', 'ECG', 'IBI', 'RMSSD', 'ET'
