@@ -31,7 +31,7 @@ proc = ICAPreprocessor(
 proc.find_eeg_files(smoke_test=False)
 # %%
 proc.fit_and_save_ica(ica_folder, n_components=15)
-proc.classify_and_save_labels(ica_folder, iclabel_threshold=0.40, brain_threshold=0.5,keep_threshold=0.5, amplitude_threshold=100.0, timecourse_seconds=200.0)
+proc.classify_and_save_labels(ica_folder, iclabel_threshold=0.70, brain_threshold=0.5,keep_threshold=0.5, amplitude_threshold=100.0, timecourse_seconds=200.0)
 # → open quality check figuers and CSV in ICA_QC_FIGS_and_CSV , check and save
 # %%
 cleaned_folder = ica_folder / 'EEG_ICA_CLEANED'
