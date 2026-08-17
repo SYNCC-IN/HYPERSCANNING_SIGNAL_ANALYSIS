@@ -21,6 +21,11 @@ Thumbs.db
 # Data files (if they are large or sensitive)
 # DATA/
 
+# Exploratory spectral parameterization pipeline: regenerable outputs
+# (run scripts/01_compute_psd.py ... 07_movie_stability_check.py to rebuild)
+# Includes Exploratory_spectral_analysis/derived_data/, the pipeline's intermediate cache.
+Exploratory_spectral_analysis/
+
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
