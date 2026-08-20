@@ -228,7 +228,13 @@ class ICAPreprocessor:
         src_data   = ica.get_sources(raw_hp).get_data()   # (n_comp, n_times)
         #n_show     = min(int(timecourse_seconds * fs), src_data.shape[1])
         src_show   = src_data #[:, :n_show]
-        src_show /= np.max(np.abs(src_show[:, masked_time_events]), axis=1)[:, None]  # normalize each component to [-1, 1] in the task event time window
+
+        n_times = src_show.shape[1]
+        _mask = np.asarray(masked_time_events) if masked_time_events is not None else np.array([])
+        if _mask.ndim != 1 or len(_mask) != n_times or not np.any(_mask):
+            _mask = np.ones(n_times, dtype=bool)
+
+        src_show /= np.max(np.abs(src_show[:, _mask]), axis=1)[:, None]  # normalize each component to [-1, 1] in the task event time window
         
         for j in range(n_comp):
             # n_pca_components=ica.n_components_ restricts reconstruction to exactly the
@@ -237,7 +243,7 @@ class ICAPreprocessor:
             # regardless of j and inflates the displayed amplitude for every component.
             only_j = ica.apply(raw_hp.copy(), include=[j], n_pca_components=ica.n_components_)   # zeruje pozostałe składowe
             projected_j = only_j.get_data() *1e6                # wkład komp. j w jednostkach danych
-            max_projected_amp = float(np.max(np.abs(projected_j[:, masked_time_events])))  # max abs amplitude of the component in the EEG space, only during task events
+            max_projected_amp = float(np.max(np.abs(projected_j[:, _mask])))  # max abs amplitude of the component in the EEG space, only during task events
             src_show[j] *= max_projected_amp  # scale time course to match projected amplitude
         
         times_show = times # [:n_show]
