@@ -137,20 +137,24 @@ EEG_bad_channels_W026 = ['Fz_cg']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W026)
 
 dyad = "W_028"
-EEG_bad_channels_W028 =   ['C3_ch']
+EEG_bad_channels_W028 =   ['C3_cg']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W028)
 
 dyad = "W_029"
-EEG_bad_channels_W029 =   ['C3_ch']
+EEG_bad_channels_W029 =   ['C3_cg']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W029)
 
 dyad = "W_042"
-EEG_bad_channels_W042 = ['T8_cg','C3_cg', 'F7_cg']
+EEG_bad_channels_W042 = ['T8_cg','F8_cg', 'C3_cg', 'F7_cg']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W042)
 # %%
 dyad = "W_044"
 EEG_bad_channels_W044 = ['F7_ch', 'T5_ch','T8_ch', 'F7_cg', 'Fz_cg']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W044)
+
+dyad = "W_047"
+EEG_bad_channels_W047 = ['O2_cg']
+export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W047)
 
 # %%
 dyad = "W_048"
@@ -165,8 +169,12 @@ dyad = "W_071"
 EEG_bad_channels_W071 = ['F7_cg','F3_ch']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W071)
 
+dyad = "W_072"
+EEG_bad_channels_W072 = ['P7_ch']
+export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W072)
+
 dyad = "W_074"
-EEG_bad_channels_W074 = ['P7_ch']
+EEG_bad_channels_W074 = ['P4_cg', 'T7_ch']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W074)
 
 dyad = "W_079"
@@ -177,6 +185,9 @@ dyad = "W_085"
 EEG_bad_channels_W085 = ['T8_ch','P8_ch']
 export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W085)
 
+dyad = "W_091"
+EEG_bad_channels_W091 = ['Fz_ch']
+export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W091)
 
 dyad = "W_115"
 EEG_bad_channels_W115 = ['F7_cg']

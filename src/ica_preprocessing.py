@@ -192,7 +192,7 @@ class ICAPreprocessor:
         df: pd.DataFrame,
         label: str,
         save_path: Path,
-        timecourse_seconds: float = 30.0,
+        masked_time_events: np.ndarray | None = None,
         times: np.ndarray | None = None,
     ) -> None:
         """
@@ -206,6 +206,8 @@ class ICAPreprocessor:
             - 'iclabel': predicted ICLabel class for each component
             - proba_<class>: predicted probability for each of the 7 ICLabel classes
             - 'auto_exclude': boolean flag indicating whether the component should be automatically excluded
+        masked_time_events : np.ndarray | None
+            Boolean array indicating which time points correspond to task events.
         """
         from matplotlib.gridspec import GridSpec
 
@@ -224,15 +226,21 @@ class ICAPreprocessor:
         A      = ica.get_components()                      # (n_eeg_ch, n_comp)
 
         src_data   = ica.get_sources(raw_hp).get_data()   # (n_comp, n_times)
-        n_show     = min(int(timecourse_seconds * fs), src_data.shape[1])
-        src_show   = src_data[:, :n_show]
-        src_show /= np.max(np.abs(src_show), axis=1)[:, None]  # normalize each component to [-1, 1]
+        #n_show     = min(int(timecourse_seconds * fs), src_data.shape[1])
+        src_show   = src_data #[:, :n_show]
+        src_show /= np.max(np.abs(src_show[:, masked_time_events]), axis=1)[:, None]  # normalize each component to [-1, 1] in the task event time window
         
         for j in range(n_comp):
-            amps = np.max(np.abs(ica.apply(raw_hp.copy(), include=[j]).get_data()[:, :n_show] * 1e6  ))# projected component in microvolts
-            src_show[j] *= amps  # scale time course to match projected amplitude
+            # n_pca_components=ica.n_components_ restricts reconstruction to exactly the
+            # requested component; without it, MNE's default (full PCA rank) also adds
+            # back the residual PCA dimensions beyond n_components_, which is identical
+            # regardless of j and inflates the displayed amplitude for every component.
+            only_j = ica.apply(raw_hp.copy(), include=[j], n_pca_components=ica.n_components_)   # zeruje pozostałe składowe
+            projected_j = only_j.get_data() *1e6                # wkład komp. j w jednostkach danych
+            max_projected_amp = float(np.max(np.abs(projected_j[:, masked_time_events])))  # max abs amplitude of the component in the EEG space, only during task events
+            src_show[j] *= max_projected_amp  # scale time course to match projected amplitude
         
-        times_show = times[:n_show]
+        times_show = times # [:n_show]
 
         info_eeg = mne.create_info(ch_names=ica.ch_names, sfreq=fs, ch_types='eeg')
         montage  = mne.channels.make_standard_montage('standard_1020')
@@ -301,7 +309,7 @@ class ICAPreprocessor:
                 ax_ts.set_xticklabels([])
             else:
                 ax_ts.set_xlabel('Time (s)', fontsize=7)
-            ax_ts.set_ylabel('a.u.', fontsize=6)
+            ax_ts.set_ylabel('µV', fontsize=6)
 
             for spine in ax_ts.spines.values():
                 spine.set_edgecolor(color)
@@ -325,10 +333,10 @@ class ICAPreprocessor:
         self,
         ica_folder: Path,
         eog_channels: list[str] | None = None,
-        eog_threshold: float = 3.0,
+        # eog_threshold: float = 3.0,
         iclabel_threshold: float = 0.70,
-        brain_threshold: float = 0.50,
-        keep_threshold: float = 0.50,
+        neural_threshold: float = 0.50,
+        # keep_threshold: float = 0.50,
         amplitude_threshold: float = 100, # in microvolts, max abs amplitude of the component in the EEG space
         exclude_labels: list[str] | None = None,
         timecourse_seconds: float = 30.0,
@@ -377,6 +385,7 @@ class ICAPreprocessor:
         }
         brain_idx = ICLABEL_CLASSES.index('brain')
         other_idx = ICLABEL_CLASSES.index('other')
+        artifacts_idx = [ICLABEL_CLASSES.index(lbl) for lbl in exclude_labels if lbl in ICLABEL_CLASSES]    
         if not self.eeg_files:
             raise RuntimeError("No EEG files loaded. Call find_eeg_files() first.")
 
@@ -389,6 +398,12 @@ class ICAPreprocessor:
                 data_xr = load_xarray_from_netcdf(str(ncdf_path))
                 original_attrs = data_xr.attrs.copy()
                 original_times = np.asarray(data_xr.coords['time'].values, dtype=float)
+
+                masked_time_events = np.any(
+                    [(original_times > ev['start_rel_s']) & (original_times <= ev['start_rel_s'] + ev['duration_s'])
+                     for ev in original_attrs.get('task_events_structure', [])],
+                    axis=0
+                )
                 prov = self._extract_provenance(original_attrs, label)
                 raw, _ = load_eeg_ncdf_as_mne_raw(str(ncdf_path), montage='standard_1020', scale_to_volts=1e-6, data_xr=data_xr)
                 out_dir = ica_folder / 'ICA_COMPs' / prov['dyad_id']
@@ -412,55 +427,39 @@ class ICAPreprocessor:
                 n_comp       = len(labels_list)
                 comp_names   = [f'ICA{i:03d}' for i in range(n_comp)]
 
-                # ── EOG correlation scores ────────────────────────────────────
-                eog_scores    = np.full(n_comp, np.nan)
-                available_eog = [ch for ch in eog_channels if ch in raw.ch_names]
-                if available_eog:
-                    try:
-                        ica.find_bads_eog(
-                            raw_hp, ch_name=available_eog, threshold=eog_threshold
-                        )
-                        scores_raw = getattr(ica, 'labels_scores_', {}).get('eog', None)
-                        if scores_raw is not None:
-                            arr = np.asarray(scores_raw).flatten()
-                            eog_scores[:len(arr)] = arr
-                    except Exception:
-                        pass
+
 
                 # ── Build DataFrame ───────────────────────────────────────────
-                source_data = ica.get_sources(raw_hp).get_data()  # (n_comp, n_times)
-                mixing_matrix = ica.mixing_matrix_                       # (n_channels, n_comp)
                 rows = []
                 for j, comp in enumerate(comp_names):
                     predicted = labels_list[j]
                     pred_prob = float(full_proba[j, pred_indices[j]])
-                    only_j = ica.apply(raw_hp.copy(), include=[j])   # zeruje pozostałe składowe
-                    projected_j = only_j.get_data() *1e6                # wkład komp. j w jednostkach danych
-                    max_projected_amp = float(np.max(np.abs(projected_j)))
-
+                    max_projected_amp = _get_max_projected_amplitude(ica, raw_hp, j, masked_time_events)
                     p_brain = float(full_proba[j, brain_idx])
                     p_other = float(full_proba[j, other_idx])
-                    p_neural = p_brain + p_other        # mass ICLabel puts on "leave it in"
+                    p_artifacts = float(np.sum(full_proba[j,artifacts_idx]))  # mass ICLabel puts on "leave it in"
+                    if p_brain < p_artifacts:
+                        p_neural = p_brain  
+                        p_artifacts += p_other  # if it is rather artifacts than brain  add other to artifacts mass
+                    else:
+                        p_neural = p_brain + p_other        # if it is rather brain than artifacts  add other to brain mass
 
                     # c1 — confident artifact: argmax is an unwanted class AND ICLabel is sure
                     c1 = (predicted in exclude_labels) and (pred_prob >= iclabel_threshold)
 
                     # c2 — not confidently neural: too little combined brain+other mass to trust
-                    c2 = (p_neural < keep_threshold)
+                    c2 = (p_neural < neural_threshold)
 
-                    # c3 — amplitude VETO, not an override: abnormally large back-projection,
-                    #      but only fires when it isn't a confident brain component
-                    #      (protects alpha bursts, slow waves, epileptiform discharges)
-                    c3 = (max_projected_amp > amplitude_threshold) and (p_brain < brain_threshold)
-
-                    auto_exclude = c1 or c2 or c3
+                    # c3 — amplitude VETO, not an override: abnormally large back-projection
+                    c3 = (max_projected_amp > amplitude_threshold)
+                    
+                    auto_exclude = c1 or c2 or c3 
                     rows.append({
                         'component':    comp,
                         'iclabel':      predicted,
                         'iclabel_prob': pred_prob,         # max prob (predicted class)
                         **{COL_MAP[cls]: float(full_proba[j, k])
                            for k, cls in enumerate(ICLABEL_CLASSES)},
-                        'eog_score':    float(eog_scores[j]),
                         'max_projected_amp': max_projected_amp,
                         'auto_exclude': auto_exclude,
                         'exclude':      auto_exclude,      # user edits this column
@@ -487,7 +486,7 @@ class ICAPreprocessor:
                     df=df,
                     label=label,
                     save_path=plot_path,
-                    timecourse_seconds=timecourse_seconds,
+                    masked_time_events=masked_time_events, #timecourse_seconds,
                     times=original_times
                 )
             except Exception as exc:
@@ -577,3 +576,13 @@ class ICAPreprocessor:
                     print(f"  Saved plot:    {plot_path.name}")
             except Exception as exc:
                 print(f"  [ERROR] {label}: {exc!r} — skipping")
+
+def _get_max_projected_amplitude(ica, raw_hp, j, mask_time_events):
+    '''
+    Compute the maximum absolute amplitude of the j-th ICA component's projection
+    only during the time events specified by mask_time_events.
+    '''
+    only_j = ica.apply(raw_hp.copy(), include=[j], n_pca_components=ica.n_components_)   # zeruje pozostałe składowe
+    projected_j = only_j.get_data() * 1e6                # wkład komp. j w jednostkach danych
+    max_projected_amp = float(np.max(np.abs(projected_j[:, mask_time_events])))  # max abs amplitude of the component in the EEG space, only during task events
+    return max_projected_amp
