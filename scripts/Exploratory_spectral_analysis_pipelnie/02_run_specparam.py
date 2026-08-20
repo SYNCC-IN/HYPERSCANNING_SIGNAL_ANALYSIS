@@ -33,15 +33,15 @@ OUTPUT_GALLERY = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '02
 OUTPUT_QUALITY = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '02_specparam_quality')
 OUTPUT_NO_PEAKS = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '02_specparam_no_peaks')
 
-FREQ_RANGE = (3, 25)
-PEAK_WIDTH_LIMITS = (1, 2.5) #(1,6)
+FREQ_RANGE = (3, 15)
+PEAK_WIDTH_LIMITS = (1, 3) #(1,6)
 MAX_N_PEAKS = 4
 MIN_PEAK_HEIGHT = 0.05
 APERIODIC_MODE = 'fixed'
 
 GALLERY_CHANNELS = ['Fz', 'Cz', 'Pz', 'O1']
-N_GALLERY_CHILDREN = 10
-N_GALLERY_CAREGIVERS = 10
+N_GALLERY_CHILDREN = 23
+N_GALLERY_CAREGIVERS = 23
 RANDOM_SEED = 42
 
 # ---------------------------------------------------------------------------

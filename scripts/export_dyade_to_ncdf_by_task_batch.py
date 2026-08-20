@@ -48,8 +48,37 @@ export_folder = "/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.
 metadata_file = os.path.join(input_folder, "meta_data.csv")
 metadata_df = pd.read_csv(metadata_file, sep=';')
 
+# %% [markdown]
+# ## Special cases
 
+dyad = "W_041"
+EEG_bad_channels_W041 = []
+export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W041)
+print(f"Finished special case: {dyad}")
 
+# %% [markdown]
+# ## Special cases
+
+dyad = "W_032"
+EEG_bad_channels_W032 = ['Fz_ch', 'Cz_ch', 'O2_ch']
+export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W032)
+print(f"Finished special case: {dyad}")
+
+# %% [markdown]
+# ## Special cases
+
+dyad = "W_074"
+EEG_bad_channels_W074 = ['T4_cg', 'T5_ch']
+export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W074)
+print(f"Finished special case: {dyad}")
+
+# %% [markdown]
+# ## Special cases
+
+dyad = "W_114"
+EEG_bad_channels_W114 = ['F7_ch', 'P8_ch']
+export_one_dyade(dyad, input_folder, export_folder, EEG_bad_channels=EEG_bad_channels_W114)
+print(f"Finished special case: {dyad}")
 # %% [markdown]
 # #  Standard export for all dyads with EEG Passive == 1.0 
 # create dyades_to_export from metadata rows with EEG Passive == 1.0

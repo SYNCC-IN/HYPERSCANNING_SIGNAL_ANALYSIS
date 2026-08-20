@@ -152,3 +152,25 @@ def batch_fit_specparam(freqs, psd_2d, channel_names, freq_range, peak_width_lim
     peaks_df = pd.DataFrame(peak_rows, columns=['channel', 'center_freq', 'power', 'bandwidth'])
     quality_df = pd.DataFrame(quality_rows)
     return peaks_df, quality_df
+
+
+def find_peak_in_window(peaks, freq_window):
+    """Find the strongest peak within a frequency window.
+
+    Parameters
+    ----------
+    peaks : list of dict
+        Detected peaks: [{center_freq, power, bandwidth}, ...].
+    freq_window : tuple of float
+        (low, high) Hz.
+
+    Returns
+    -------
+    dict or None
+        The strongest peak (by power) within the window, or None if no peak found.
+    """
+    low, high = freq_window
+    in_window = [p for p in peaks if low <= p['center_freq'] <= high]
+    if not in_window:
+        return None
+    return max(in_window, key=lambda p: p['power'])

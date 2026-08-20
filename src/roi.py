@@ -50,6 +50,95 @@ def validate_roi_with_prevalence(prevalence_df, roi_channels, freq_bin, min_prev
     return passes, channel_prevalence
 
 
+def validate_roi_two_bands(prevalence_df, roi_channels, slow_window, fast_window, min_prevalence=0.5):
+    """Validate ROI viability separately for slow and fast bands.
+
+    Parameters
+    ----------
+    prevalence_df : pd.DataFrame
+        Peak prevalence per channel per frequency bin (from step 3), with
+        columns labelled ``'{low}-{high}'`` matching ``slow_window`` and
+        ``fast_window``.
+    roi_channels : list of str
+        Channels in this ROI.
+    slow_window : tuple of float
+        (low, high) Hz for slow rhythm validation.
+    fast_window : tuple of float
+        (low, high) Hz for fast rhythm validation.
+    min_prevalence : float
+        Threshold for viability.
+
+    Returns
+    -------
+    dict
+        roi_channels : list of str
+        slow_prevalence : float — mean prevalence across ROI channels in slow window
+        fast_prevalence : float — mean prevalence across ROI channels in fast window
+        slow_viable : bool
+        fast_viable : bool
+    """
+    slow_label = f'{slow_window[0]}-{slow_window[1]}'
+    fast_label = f'{fast_window[0]}-{fast_window[1]}'
+    slow_prevalence = float(prevalence_df.loc[roi_channels, slow_label].mean())
+    fast_prevalence = float(prevalence_df.loc[roi_channels, fast_label].mean())
+    return {
+        'roi_channels': roi_channels,
+        'slow_prevalence': slow_prevalence,
+        'fast_prevalence': fast_prevalence,
+        'slow_viable': slow_prevalence >= min_prevalence,
+        'fast_viable': fast_prevalence >= min_prevalence,
+    }
+
+
+def check_peak_survival(channel_peaks_list, roi_peaks, band_window, freq_tolerance=1.0):
+    """Check if a peak detected at individual channels survives ROI averaging.
+
+    Parameters
+    ----------
+    channel_peaks_list : list of dict
+        Peaks from individual channel fits within the ROI.
+        Each dict: {channel, center_freq, power, bandwidth}.
+    roi_peaks : list of dict
+        Peaks from the ROI-averaged PSD fit.
+        Each dict: {center_freq, power, bandwidth}.
+    band_window : tuple of float
+        (low, high) Hz — which band to check survival in.
+    freq_tolerance : float
+        Max Hz shift between channel-level and ROI-level peak to count as "survived".
+
+    Returns
+    -------
+    dict
+        channel_peak_present : bool — was a peak in band_window at individual channels?
+        roi_peak_present : bool — is a peak in band_window in the ROI-averaged fit?
+        survived : bool — both present and within freq_tolerance?
+        channel_cf : float or None — mean center_freq at channel level
+        roi_cf : float or None — center_freq at ROI level
+        cf_shift : float or None — |roi_cf - channel_cf|
+    """
+    low, high = band_window
+    channel_in_band = [p for p in channel_peaks_list if low <= p['center_freq'] <= high]
+    roi_in_band = [p for p in roi_peaks if low <= p['center_freq'] <= high]
+
+    channel_peak_present = len(channel_in_band) > 0
+    roi_peak_present = len(roi_in_band) > 0
+
+    channel_cf = float(np.mean([p['center_freq'] for p in channel_in_band])) if channel_peak_present else None
+    roi_cf = float(max(roi_in_band, key=lambda p: p['power'])['center_freq']) if roi_peak_present else None
+
+    cf_shift = abs(roi_cf - channel_cf) if channel_cf is not None and roi_cf is not None else None
+    survived = bool(cf_shift is not None and cf_shift <= freq_tolerance)
+
+    return {
+        'channel_peak_present': channel_peak_present,
+        'roi_peak_present': roi_peak_present,
+        'survived': survived,
+        'channel_cf': channel_cf,
+        'roi_cf': roi_cf,
+        'cf_shift': cf_shift,
+    }
+
+
 def average_psd_within_roi(psd_2d, channel_names, roi_channels):
     """Average PSD across the channels belonging to an ROI.
 

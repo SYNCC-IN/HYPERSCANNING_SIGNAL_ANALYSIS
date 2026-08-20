@@ -40,7 +40,7 @@ home_path=Path(
 )
 
 
-DATA_DIR = FUW_path
+DATA_DIR = home_path
 OUTPUT_INDIVIDUAL = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '01_psd_individual')
 OUTPUT_GRAND_AVG = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '01_psd_grand_average')
 DERIVED_DIR = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / 'derived_data')

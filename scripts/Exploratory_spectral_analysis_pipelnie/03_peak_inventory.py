@@ -2,7 +2,8 @@
 
 Loads the peak table from Step 2, computes prevalence by role x group x frequency
 band, and generates artifacts 3a (frequency histograms), 3b (prevalence
-topomaps), 3c (individual peak-frequency topomaps), and 3d (peak frequency vs. age).
+topomaps), 3c (individual peak-frequency topomaps), 3d (peak frequency vs. age),
+3e (per-participant peak cluster topomaps), and 3f (peak cluster summary).
 """
 
 import sys
@@ -18,10 +19,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.io_utils import ensure_dir
-from src.peaks import classify_channel_cluster, compute_peak_prevalence
+from src.peaks import (
+    classify_channel_cluster, cluster_peaks_across_channels, cluster_peaks_all_rois,
+    compute_peak_prevalence, count_peaks_per_roi,
+)
 from src.viz import (
-    make_montage_info, plot_peak_freq_histogram, plot_peak_freq_topomap_individual,
-    plot_peak_freq_vs_age,
+    COLORS, make_montage_info, plot_individual_peak_profiles, plot_peak_cluster_topomaps,
+    plot_peak_count_histogram, plot_peak_freq_histogram, plot_peak_freq_topomap_individual,
+    plot_peak_freq_vs_age, plot_roi_cluster_scatter, plot_two_peak_scatter,
 )
 
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -34,16 +39,23 @@ OUT_HIST = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_peak_
 OUT_PREVALENCE = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_peak_prevalence_topomaps')
 OUT_INDIVIDUAL = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_peak_freq_topomaps_individual')
 OUT_VS_AGE = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_peak_freq_vs_age')
+OUT_CLUSTERS = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_peak_clusters')
+OUT_ROI_CLUSTERS = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_roi_peak_clusters')
+OUT_BIMODALITY = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_bimodality_diagnostic')
 
 FREQ_BINS = [(3, 5), (5, 7), (7, 9), (9, 11), (11, 13)]
-CLUSTERS_3A = ['frontal', 'central', 'parietal', 'occipital']
+
+FREQ_TOLERANCE = 1.0    # Hz — max distance to join a cluster
+MIN_CHANNELS = 3        # minimum channels for a "robust" cluster
+WITHIN_ROI_FREQ_TOLERANCE = 1.0  # Hz — max distance to join a within-ROI cluster
+CLUSTERS_3A = ['frontal-lateral', 'frontal-midline', 'central-midline', 'sensorimotor', 'parietal', 'occipital', 'temporal'] #['frontal']
 POSTERIOR_CHANNELS = ['P3', 'Pz', 'P4', 'O1', 'O2']
 N_EXEMPLARS = 3
 RANDOM_SEED = 42
 
 # Must match the specparam freq_range used in scripts/02_run_specparam.py, so
 # artifact 3a's histogram window doesn't silently disagree with the fit range.
-SPECPARAM_FREQ_RANGE = (3, 25)
+SPECPARAM_FREQ_RANGE = (3, 15)
 
 # Peaks outside this range are excluded from artifacts 3c and 3d.
 PEAK_FREQ_FILTER_RANGE = (3, 15)
@@ -53,12 +65,28 @@ CHANNEL_NAMES = [
     'P7', 'P3', 'Pz', 'P4', 'P8', 'O1', 'O2',
 ]
 
+CHANNEL_CLUSTERS = {
+    'frontal-lateral': ['F3', 'F4'],
+    'frontal-midline': ['Fz'],
+    'central-midline': ['Cz'],
+    'sensorimotor':   ['C3', 'C4'],
+    'parietal':  ['P3', 'Pz', 'P4'],
+    'occipital': ['O1', 'O2'],
+    'temporal':  ['T7', 'T8', 'P7', 'P8'],
+}
+
+# ROIs examined for within- vs between-subject bimodality of the dominant rhythm.
+DIAGNOSTIC_ROIS = {
+    'sensorimotor': ['C3', 'C4'],
+    'parietal':     ['P3', 'Pz', 'P4'],
+}
+
 # ---------------------------------------------------------------------------
 # 1. Load peaks and metadata
 # ---------------------------------------------------------------------------
 all_peaks_df = pd.read_csv(QUALITY_DIR / 'all_peaks.csv')
 fit_quality_df = pd.read_csv(QUALITY_DIR / 'fit_quality.csv')
-all_peaks_df['channel_cluster'] = all_peaks_df['channel'].apply(classify_channel_cluster)
+all_peaks_df['channel_cluster'] = all_peaks_df['channel'].apply(classify_channel_cluster, channel_clusters=CHANNEL_CLUSTERS)
 
 # ---------------------------------------------------------------------------
 # 2. Prevalence tables per role x group x frequency bin
@@ -160,3 +188,177 @@ fig.axes[0].set_title(f'{fig.axes[0].get_title()}\n{range_suffix}', fontsize=9)
 fig.savefig(OUT_VS_AGE / 'peak_freq_vs_age_posterior.png', dpi=300)
 plt.close(fig)
 print(f'Saved artifact 3d to {OUT_VS_AGE}')
+
+# ---------------------------------------------------------------------------
+# Cross-channel peak clustering
+# ---------------------------------------------------------------------------
+participant_info = all_peaks_df[['participant_id', 'role', 'group']].drop_duplicates()
+
+cluster_tables = []
+for _, prow in participant_info.iterrows():
+    pid = prow['participant_id']
+    participant_peaks = all_peaks_df[all_peaks_df['participant_id'] == pid]
+    clusters = cluster_peaks_across_channels(participant_peaks, freq_tolerance=FREQ_TOLERANCE, min_channels=MIN_CHANNELS)
+    clusters['participant_id'] = pid
+    clusters['role'] = prow['role']
+    clusters['group'] = prow['group']
+    cluster_tables.append(clusters)
+
+peak_clusters_df = pd.concat(cluster_tables, ignore_index=True)
+peak_clusters_df.to_csv(OUT_CLUSTERS / 'peak_clusters.csv', index=False)
+print(f'Saved {len(peak_clusters_df)} peak clusters to {OUT_CLUSTERS}')
+
+# ---------------------------------------------------------------------------
+# Artifact 3e - Peak cluster topomaps (one figure per participant)
+# ---------------------------------------------------------------------------
+for _, prow in participant_info.iterrows():
+    pid = prow['participant_id']
+    participant_peaks = all_peaks_df[all_peaks_df['participant_id'] == pid]
+    participant_clusters = peak_clusters_df[peak_clusters_df['participant_id'] == pid]
+    fig = plot_peak_cluster_topomaps(participant_clusters, participant_peaks, CHANNEL_NAMES, pid, prow['role'], prow['group'])
+    fig.savefig(OUT_CLUSTERS / f'{pid}_peak_clusters.png', dpi=300)
+    plt.close(fig)
+
+print(f'Saved artifact 3e to {OUT_CLUSTERS}')
+
+# ---------------------------------------------------------------------------
+# Artifact 3f - Peak cluster summary (frequency x n_channels, by role/group)
+# ---------------------------------------------------------------------------
+fig, axes = plt.subplots(1, 2, figsize=(11, 5), sharex=True, sharey=True)
+for ax, role in zip(axes, ['child', 'caregiver']):
+    role_clusters = peak_clusters_df[peak_clusters_df['role'] == role]
+    for grp in ['TD', 'ASD']:
+        grp_clusters = role_clusters[role_clusters['group'] == grp]
+        ax.scatter(
+            grp_clusters['mean_center_freq'], grp_clusters['n_channels'],
+            s=grp_clusters['total_power'] * 40 + 10,
+            color=COLORS.get(grp, 'gray'), label=grp, alpha=0.5, edgecolor='none',
+        )
+    ax.axhline(MIN_CHANNELS, color='black', linestyle='--', lw=1, label=f'min_channels = {MIN_CHANNELS}')
+    ax.set_xlabel('Mean center frequency (Hz)')
+    ax.set_title(role, fontsize=10)
+    ax.legend(fontsize=7)
+axes[0].set_ylabel('Number of channels')
+fig.suptitle('Peak cluster topographic spread by frequency, role, and group')
+fig.tight_layout(rect=[0, 0, 1, 0.94])
+fig.savefig(OUT_CLUSTERS / 'cluster_summary.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 3f to {OUT_CLUSTERS}')
+
+# ---------------------------------------------------------------------------
+# Within-ROI peak clustering
+# ---------------------------------------------------------------------------
+roi_cluster_tables = []
+for _, prow in participant_info.iterrows():
+    pid = prow['participant_id']
+    participant_peaks = all_peaks_df[all_peaks_df['participant_id'] == pid]
+    roi_clusters = cluster_peaks_all_rois(participant_peaks, CHANNEL_CLUSTERS, freq_tolerance=WITHIN_ROI_FREQ_TOLERANCE)
+    roi_clusters['participant_id'] = pid
+    roi_clusters['role'] = prow['role']
+    roi_clusters['group'] = prow['group']
+    roi_cluster_tables.append(roi_clusters)
+
+roi_peak_clusters_df = pd.concat(roi_cluster_tables, ignore_index=True)
+roi_peak_clusters_df.to_csv(OUT_ROI_CLUSTERS / 'roi_peak_clusters.csv', index=False)
+print(f'Saved {len(roi_peak_clusters_df)} within-ROI peak clusters to {OUT_ROI_CLUSTERS}')
+
+# ---------------------------------------------------------------------------
+# Artifact 3g - Within-ROI cluster scatter (frequency vs. summed power)
+# ---------------------------------------------------------------------------
+fig = plot_roi_cluster_scatter(roi_peak_clusters_df, group_colors={'TD': COLORS['TD'], 'ASD': COLORS['ASD']})
+fig.savefig(OUT_ROI_CLUSTERS / 'roi_cluster_scatter.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 3g to {OUT_ROI_CLUSTERS}')
+
+# ---------------------------------------------------------------------------
+# Within- vs between-subject bimodality diagnostic
+# ---------------------------------------------------------------------------
+# Use the within-ROI clustered peaks (one row per distinct oscillation) rather
+# than raw all_peaks_df, so a single rhythm seen at multiple ROI electrodes
+# isn't double-counted as separate peaks.
+def _clusters_to_peaks_frame(cluster_subset, extra_cols=()):
+    df = cluster_subset.rename(columns={
+        'weighted_center_freq': 'center_freq', 'summed_power': 'power', 'mean_bandwidth': 'bandwidth',
+    }).copy()
+    df['channel'] = df['channel_list'].str.split(',').str[0]
+    return df[['channel', 'center_freq', 'power', 'bandwidth', *extra_cols]]
+
+
+peak_count_rows = []
+for _, prow in participant_info.iterrows():
+    pid = prow['participant_id']
+    for roi_label, roi_channels in DIAGNOSTIC_ROIS.items():
+        cluster_subset = roi_peak_clusters_df[
+            (roi_peak_clusters_df['participant_id'] == pid) & (roi_peak_clusters_df['roi'] == roi_label)
+        ]
+        roi_peaks = _clusters_to_peaks_frame(cluster_subset)
+        counts = count_peaks_per_roi(roi_peaks, roi_channels)
+        peak_count_rows.append({
+            'participant_id': pid,
+            'role': prow['role'],
+            'group': prow['group'],
+            'roi': roi_label,
+            'n_peaks': counts['n_peaks'],
+            'peak_freqs': counts['peak_freqs'],
+            'peak_powers': counts['peak_powers'],
+        })
+
+peak_counts_df = pd.DataFrame(peak_count_rows)
+peak_counts_df.to_csv(OUT_BIMODALITY / 'peak_counts_per_roi.csv', index=False)
+print(f'Saved {len(peak_counts_df)} peak-count rows to {OUT_BIMODALITY}')
+
+two_peak_rows = []
+for _, row in peak_counts_df[peak_counts_df['n_peaks'] >= 2].iterrows():
+    freqs, powers = row['peak_freqs'], row['peak_powers']
+    if len(freqs) > 2:
+        top2 = np.argsort(powers)[::-1][:2]
+        freqs, powers = np.array(freqs)[top2], np.array(powers)[top2]
+    (f1, p1), (f2, p2) = sorted(zip(freqs, powers))
+    two_peak_rows.append({
+        'participant_id': row['participant_id'],
+        'role': row['role'],
+        'group': row['group'],
+        'roi': row['roi'],
+        'peak1_freq': f1,
+        'peak2_freq': f2,
+        'peak1_power': p1,
+        'peak2_power': p2,
+        'freq_gap': f2 - f1,
+    })
+
+two_peak_df = pd.DataFrame(two_peak_rows)
+two_peak_df.to_csv(OUT_BIMODALITY / 'two_peak_participants.csv', index=False)
+print(f'Saved {len(two_peak_df)} two-peak participants to {OUT_BIMODALITY}')
+
+# ---------------------------------------------------------------------------
+# Artifact 3h - Peak count histogram
+# ---------------------------------------------------------------------------
+fig = plot_peak_count_histogram(peak_counts_df, rois=list(DIAGNOSTIC_ROIS.keys()))
+fig.savefig(OUT_BIMODALITY / 'peak_count_histogram.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 3h to {OUT_BIMODALITY}')
+
+# ---------------------------------------------------------------------------
+# Artifact 3i - Two-peak scatter
+# ---------------------------------------------------------------------------
+fig = plot_two_peak_scatter(two_peak_df)
+fig.savefig(OUT_BIMODALITY / 'two_peak_scatter.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 3i to {OUT_BIMODALITY}')
+
+# ---------------------------------------------------------------------------
+# Artifact 3j - Individual peak profile strip plots (children only)
+# ---------------------------------------------------------------------------
+individual_filenames = {
+    'sensorimotor': 'individual_peaks_sensorimotor.png',
+    'parietal': 'individual_peaks_parietal.png',
+}
+for roi_label, roi_channels in DIAGNOSTIC_ROIS.items():
+    cluster_subset = roi_peak_clusters_df[
+        (roi_peak_clusters_df['roi'] == roi_label) & (roi_peak_clusters_df['role'] == 'child')
+    ]
+    roi_peaks = _clusters_to_peaks_frame(cluster_subset, extra_cols=['participant_id', 'group'])
+    fig = plot_individual_peak_profiles(roi_peaks, roi_channels, roi_label, role='child')
+    fig.savefig(OUT_BIMODALITY / individual_filenames[roi_label], dpi=300)
+    plt.close(fig)
+print(f'Saved artifact 3j to {OUT_BIMODALITY}')

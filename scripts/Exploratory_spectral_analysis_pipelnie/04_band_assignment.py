@@ -1,14 +1,16 @@
-"""Step 4 - Assign functional band labels per participant.
+"""Step 4 - Two-band (slow/fast rhythm) assignment from within-ROI peak clusters.
 
-Loads the peak table from Step 2, applies the posterior-alpha / frontal-theta
-/ mu decision sequence, saves the assignment table, and generates artifact 4a
-(strip plot of posterior alpha frequency by role x group).
+Loads the within-ROI peak clusters from Step 3, assigns slow and fast rhythm
+bands per participant x ROI (falling back to a single dominant rhythm where
+the two strongest clusters aren't far enough apart), computes IAF and dyadic
+distance metrics, and generates artifacts 4a (assignment strip plot), 4b
+(assignment summary table), 4c (IAF distance by group), and 4d (gap
+distribution).
 """
 
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -17,81 +19,117 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.io_utils import ensure_dir
-from src.bands import assign_bands
-from src.viz import COLORS
+from src.bands import assign_bands_all_rois, compute_iaf_metrics
+from src.viz import (
+    plot_band_assignment_strips, plot_dyad_gap_scatter, plot_gap_distribution,
+    plot_iaf_distance_by_group,
+)
 
 plt.style.use('seaborn-v0_8-whitegrid')
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-QUALITY_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / '02_specparam_quality'
+ROI_CLUSTERS_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_roi_peak_clusters'
+DERIVED_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / 'derived_data'
 OUTPUT_DIR = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '04_band_assignment')
 
-# ---------------------------------------------------------------------------
-# 1. Load peaks and per-participant metadata
-# ---------------------------------------------------------------------------
-all_peaks_df = pd.read_csv(QUALITY_DIR / 'all_peaks.csv')
-participant_meta = (
-    all_peaks_df[['participant_id', 'role', 'group', 'age_months']]
-    .drop_duplicates(subset='participant_id')
-    .set_index('participant_id')
-)
+ASSIGNMENT_ROIS = ['parietal', 'sensorimotor']  # ROIs to assign bands for
+MIN_GAP = 1.5  # Hz — minimum gap to split into slow/fast
+PRIMARY_ROI = 'parietal'  # for IAF extraction
+FALLBACK_ROI = 'sensorimotor'  # if parietal has no peak
 
 # ---------------------------------------------------------------------------
-# 2. Run band assignment for each participant
+# 1. Load within-ROI peak clusters and participant metadata
 # ---------------------------------------------------------------------------
-assignments = []
+roi_peak_clusters_df = pd.read_csv(ROI_CLUSTERS_DIR / 'roi_peak_clusters.csv')
+participant_meta = pd.read_csv(DERIVED_DIR / 'participant_metadata.csv').set_index('participant_id')
+
+# ---------------------------------------------------------------------------
+# 2. Assign slow/fast bands per participant x ROI
+# ---------------------------------------------------------------------------
+assignment_tables = []
 for pid, meta in participant_meta.iterrows():
-    age_years = meta['age_months'] / 12.0 if meta['role'] == 'child' and pd.notna(meta['age_months']) else None
-    result = assign_bands(all_peaks_df, pid, age=age_years)
-    result['role'] = meta['role']
-    result['group'] = meta['group']
-    result['age_months'] = meta['age_months']
-    assignments.append(result)
+    participant_clusters = roi_peak_clusters_df[roi_peak_clusters_df['participant_id'] == pid]
+    assignments = assign_bands_all_rois(participant_clusters, pid, meta['role'], ASSIGNMENT_ROIS, min_gap=MIN_GAP)
+    assignments['group'] = meta['group']
+    assignments['dyad_id'] = meta['dyad_id']
+    assignments['age_months'] = meta['age_months']
+    assignment_tables.append(assignments)
 
-band_assignments_df = pd.DataFrame(assignments)
+band_assignments_df = pd.concat(assignment_tables, ignore_index=True)
 band_assignments_df.to_csv(OUTPUT_DIR / 'band_assignments.csv', index=False)
-print(f'Saved band assignments for {len(band_assignments_df)} participants to {OUTPUT_DIR}')
+print(f'Saved {len(band_assignments_df)} band assignments to {OUTPUT_DIR}')
 
 # ---------------------------------------------------------------------------
-# Artifact 4a - Strip plot of posterior alpha frequency by role x group
+# 3. IAF and dyadic distance metrics
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(7, 5))
-rng = np.random.default_rng(42)
+iaf_metrics_df = compute_iaf_metrics(band_assignments_df)
+iaf_metrics_df.to_csv(OUTPUT_DIR / 'iaf_metrics.csv', index=False)
+print(f'Saved IAF metrics for {len(iaf_metrics_df)} participants to {OUTPUT_DIR}')
 
-categories = [('child', 'TD'), ('child', 'ASD'), ('caregiver', 'TD'), ('caregiver', 'ASD')]
-x_positions = {cat: i for i, cat in enumerate(categories)}
-
-for cat in categories:
-    role, group = cat
-    subset = band_assignments_df[(band_assignments_df['role'] == role) & (band_assignments_df['group'] == group)]
-    vals = subset['posterior_alpha_cf'].dropna()
-    jitter = rng.uniform(-0.15, 0.15, size=len(vals))
-    ax.scatter(np.full(len(vals), x_positions[cat]) + jitter, vals, color=COLORS.get(group, 'gray'), alpha=0.7, s=25)
-
-for freq in [4, 8, 12]:
-    ax.axhline(freq, color='gray', linestyle='--', lw=0.8, alpha=0.7)
-
-ax.set_xticks(list(x_positions.values()))
-ax.set_xticklabels([f'{role}\n{group}' for role, group in categories])
-ax.set_ylabel('Posterior alpha center frequency (Hz)')
-ax.set_title('Posterior dominant rhythm by role and group')
-
-n_no_posterior = band_assignments_df['posterior_alpha_cf'].isna().sum()
-n_theta_only = (
-    band_assignments_df['frontal_theta_cf'].notna() & band_assignments_df['posterior_alpha_cf'].isna()
-).sum()
-n_mu = band_assignments_df['mu_cf'].notna().sum()
-annotation = (
-    f'No posterior peak: {n_no_posterior}\n'
-    f'Theta-only (no posterior): {n_theta_only}\n'
-    f'Mu detected: {n_mu}'
-)
-ax.text(0.98, 0.02, annotation, transform=ax.transAxes, fontsize=8, ha='right', va='bottom',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
-fig.tight_layout()
-fig.savefig(OUTPUT_DIR / 'posterior_alpha_strip_plot.png', dpi=300)
+# ---------------------------------------------------------------------------
+# Artifact 4a - Band assignment strip plot
+# ---------------------------------------------------------------------------
+fig = plot_band_assignment_strips(band_assignments_df, rois=ASSIGNMENT_ROIS)
+fig.savefig(OUTPUT_DIR / 'band_assignment_strips.png', dpi=300)
 plt.close(fig)
 print(f'Saved artifact 4a to {OUTPUT_DIR}')
+
+# ---------------------------------------------------------------------------
+# Artifact 4b - Assignment summary statistics
+# ---------------------------------------------------------------------------
+summary_rows = []
+for role in ['child', 'caregiver']:
+    for group in ['TD', 'ASD']:
+        for roi in ASSIGNMENT_ROIS:
+            subset = band_assignments_df[
+                (band_assignments_df['role'] == role)
+                & (band_assignments_df['group'] == group)
+                & (band_assignments_df['roi'] == roi)
+            ]
+            note_counts = subset['assignment_note'].value_counts()
+            two_rhythms = subset[subset['assignment_note'] == 'two_rhythms']
+            summary_rows.append({
+                'role': role,
+                'group': group,
+                'roi': roi,
+                'n_two_rhythms': note_counts.get('two_rhythms', 0),
+                'n_single_dominant': note_counts.get('single_dominant', 0),
+                'n_no_peaks': note_counts.get('no_peaks', 0),
+                'slow_cf_mean': two_rhythms['slow_cf'].mean(),
+                'slow_cf_sd': two_rhythms['slow_cf'].std(),
+                'fast_cf_mean': two_rhythms['fast_cf'].mean(),
+                'fast_cf_sd': two_rhythms['fast_cf'].std(),
+                'freq_gap_mean': two_rhythms['freq_gap'].mean(),
+                'freq_gap_sd': two_rhythms['freq_gap'].std(),
+            })
+
+assignment_summary_df = pd.DataFrame(summary_rows)
+print(assignment_summary_df.to_string(index=False))
+assignment_summary_df.to_csv(OUTPUT_DIR / 'assignment_summary.csv', index=False)
+print(f'Saved artifact 4b to {OUTPUT_DIR}')
+
+# ---------------------------------------------------------------------------
+# Artifact 4c - IAF distance by group
+# ---------------------------------------------------------------------------
+fig = plot_iaf_distance_by_group(iaf_metrics_df)
+fig.savefig(OUTPUT_DIR / 'iaf_distance_by_group.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 4c to {OUTPUT_DIR}')
+
+# ---------------------------------------------------------------------------
+# Artifact 4d - Gap distribution
+# ---------------------------------------------------------------------------
+fig = plot_gap_distribution(band_assignments_df, min_gap=MIN_GAP)
+fig.savefig(OUTPUT_DIR / 'gap_distribution.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 4d to {OUTPUT_DIR}')
+
+# ---------------------------------------------------------------------------
+# Artifact 4e - Dyadic gap scatter (caregiver vs. child)
+# ---------------------------------------------------------------------------
+fig = plot_dyad_gap_scatter(iaf_metrics_df)
+fig.savefig(OUTPUT_DIR / 'dyad_gap_scatter.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 4e to {OUTPUT_DIR}')
