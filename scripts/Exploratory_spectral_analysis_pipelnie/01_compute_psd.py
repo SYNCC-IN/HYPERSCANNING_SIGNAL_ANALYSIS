@@ -27,12 +27,20 @@ plt.style.use('seaborn-v0_8-whitegrid')
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DATA_DIR = Path(
+# These paths work for JZygierwicz. Anyone using this script has to set his/her own paths.
+FUW_path = Path('/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/'
+                '.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/'
+                'WP4          - Joint study/UniWAW Data collection/'
+                'UNIWAW_EEG_exported_BY_TASKS/ICA_output/EEG_ICA_CLEANED') #FUW path
+home_path=Path(
     "/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/"
     ".shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/"
     "WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/"
     "ICA_output/EEG_ICA_CLEANED"
 )
+
+
+DATA_DIR = FUW_path
 OUTPUT_INDIVIDUAL = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '01_psd_individual')
 OUTPUT_GRAND_AVG = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '01_psd_grand_average')
 DERIVED_DIR = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / 'derived_data')
@@ -44,7 +52,7 @@ MOVIE_COLORS = {'Peppa': '#1b9e77', 'Incredibles': '#d95f02', 'Brave': '#7570b3'
 
 # Dyad IDs excluded from analysis (both child and caregiver dropped), e.g. due to
 # severe artifact contamination or dead/flat channels found during QC inspection.
-EXCLUDED_DYADS = ['W_027', 'W_029', 'W_042', 'W_044','W_071','W_072','W_074','W_114','W_116']
+EXCLUDED_DYADS = ['W_027','W_042', 'W_044', 'W_072','W_114']  #['W_029', 'W_071','W_074','W_116']
 
 # ---------------------------------------------------------------------------
 # 1. Discover files, compute PSD per participant x movie
