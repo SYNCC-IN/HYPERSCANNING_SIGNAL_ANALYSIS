@@ -52,7 +52,9 @@ MOVIE_COLORS = {'Peppa': '#1b9e77', 'Incredibles': '#d95f02', 'Brave': '#7570b3'
 
 # Dyad IDs excluded from analysis (both child and caregiver dropped), e.g. due to
 # severe artifact contamination or dead/flat channels found during QC inspection.
-EXCLUDED_DYADS = ['W_027','W_042', 'W_044', 'W_072','W_114']  #['W_029', 'W_071','W_074','W_116']
+#EXCLUDED_DYADS = ['W_027','W_042', 'W_044', 'W_072','W_114']  #['W_029', 'W_071','W_074','W_116']
+
+EXCLUDED_DYADS = ['W_008', 'W_012', 'W_025', 'W_027', 'W_035', 'W_037', 'W_042', 'W_044', 'W_057', 'W_072']
 
 # ---------------------------------------------------------------------------
 # 1. Discover files, compute PSD per participant x movie

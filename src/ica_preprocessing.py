@@ -161,7 +161,7 @@ class ICAPreprocessor:
                 out_dir.mkdir(parents=True, exist_ok=True)
 
                 raw_hp = raw.copy()
-                raw_hp.filter(l_freq=1.0, h_freq=100, verbose='ERROR')
+                raw_hp.filter(l_freq=1.0, h_freq=60, verbose='ERROR')
                 rank = mne.compute_rank(raw_hp, rank='info')['eeg']  # data-based SVD catches interp + CAR
                 ica = ICA(
                     n_components=min(n_components, rank),

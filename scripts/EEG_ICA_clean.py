@@ -23,17 +23,20 @@ proc = ICAPreprocessor(
 #proc.find_eeg_files(dyad_ids=['W_000'])
 
 # Kilka konkretnych dyad
-# proc.find_eeg_files(dyad_ids=['W_019'])#, 'W_020', 'W_021', 'W_022', 'W_024', 'W_025', 'W_026', 'W_028', 'W_029'])
+# proc.find_eeg_files(dyad_ids=['W_032', 'W_041', 'W_074', 'W_114'])#
 # Smoke test (bez zmian)
 # proc.find_eeg_files(smoke_test=True, smoke_dyads_n=2)
 
 # Pełne przetwarzanie
 proc.find_eeg_files(smoke_test=False)
-# %%
-proc.fit_and_save_ica(ica_folder, n_components=15)
-proc.classify_and_save_labels(ica_folder, iclabel_threshold=0.70, neural_threshold=0.5, amplitude_threshold=100.0)
+# %% [Stage 1] FITTING
+# proc.fit_and_save_ica(ica_folder, n_components=15)
+# %% [Stage 2] CLASSIFYING
+# proc.classify_and_save_labels(ica_folder, iclabel_threshold=0.70, neural_threshold=0.5, amplitude_threshold=100.0)
+
+
 # → open quality check figuers and CSV in ICA_QC_FIGS_and_CSV , check and save
-# %%
+# %% [Stage 3] APPLYING
 cleaned_folder = ica_folder / 'EEG_ICA_CLEANED'
 cleaned_folder.mkdir(parents=True, exist_ok=True)
 proc.apply_ica_and_save(ica_folder, cleaned_folder)
