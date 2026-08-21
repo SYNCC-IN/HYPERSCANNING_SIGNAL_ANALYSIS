@@ -20,8 +20,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.io_utils import ensure_dir
 from src.peaks import compute_peak_prevalence
-from src.roi import validate_roi_two_bands
-from src.viz import plot_roi_validation_heatmap
+from src.roi import validate_roi_two_bands, validate_roi_individual_bands
+from src.viz import plot_roi_validation_heatmap, plot_roi_validation_heatmap_individual
 
 plt.style.use('seaborn-v0_8-whitegrid')
 
@@ -38,6 +38,8 @@ ROIS = {
     'central-midline':  ['Cz'],
     'parietal':         ['P3', 'Pz', 'P4'],
     'occipital':        ['O1', 'O2'],
+    'lateral-temporal': ['T7', 'T8'],
+    'temporo-parietal': ['P7', 'P8'],
 }
 
 # Frequency windows for prevalence validation, derived from step 4 distributions
@@ -127,3 +129,34 @@ fig = plot_roi_validation_heatmap(roi_validation_df, min_prevalence=MIN_PREVALEN
 fig.savefig(OUTPUT_DIR / 'roi_validation_heatmap.png', dpi=300)
 plt.close(fig)
 print(f'Saved artifact 5a to {OUTPUT_DIR}')
+
+# ---------------------------------------------------------------------------
+# Artifact 5b - ROI validation heatmap, individualized band windows
+# ---------------------------------------------------------------------------
+# Uses each participant's own slow_cf/slow_bw and fast_cf/fast_bw (from Step 4,
+# looked up per ROI — not borrowed from the primary/parietal ROI) instead of
+# the fixed group-level SLOW/FAST_FREQ_WINDOW used above.
+individual_rows = []
+for roi_name, roi_channels in ROIS.items():
+    individual_presence_df = validate_roi_individual_bands(
+        all_peaks_df, band_assignments_df, roi_channels, roi_name,
+        slow_window=SLOW_FREQ_WINDOW, fast_window=FAST_FREQ_WINDOW,
+    )
+    row = {'roi': roi_name}
+    for role_label, role_actual in ROLE_LABELS.items():
+        for group in GROUPS:
+            subset = individual_presence_df[
+                (individual_presence_df['role'] == role_actual) & (individual_presence_df['group'] == group)
+            ]
+            row[f'slow_prev_{role_label}_{group}'] = round(float(subset['slow_present'].mean()), 3)
+            row[f'fast_prev_{role_label}_{group}'] = round(float(subset['fast_present'].mean()), 3)
+    individual_rows.append(row)
+
+roi_validation_individual_df = pd.DataFrame(individual_rows)
+roi_validation_individual_df.to_csv(OUTPUT_DIR / 'roi_validation_individual.csv', index=False)
+print(roi_validation_individual_df.to_string(index=False))
+
+fig = plot_roi_validation_heatmap_individual(roi_validation_individual_df, min_prevalence=MIN_PREVALENCE)
+fig.savefig(OUTPUT_DIR / 'roi_validation_heatmap_individual.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 5b to {OUTPUT_DIR}')

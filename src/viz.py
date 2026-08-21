@@ -524,6 +524,7 @@ def plot_individual_peak_profiles(peaks_df, roi_channels, roi_label, role='child
     ax.set_yticks(range(len(pid_order)))
     ax.set_yticklabels(pid_order, fontsize=5)
     ax.set_xlabel('Center frequency (Hz)')
+    ax.set_xlim((3,15))
     ax.set_title(f'{roi_label} ({role}): individual peak profiles', fontsize=10)
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -668,7 +669,7 @@ def plot_gap_distribution(band_assignments_df, min_gap):
     two_rhythms = band_assignments_df[band_assignments_df['assignment_note'] == 'two_rhythms']
     roles = ['child', 'caregiver']
     max_gap = two_rhythms['freq_gap'].max() if len(two_rhythms) else min_gap * 2
-    bins = np.arange(0, max_gap + 0.5, 0.5)
+    bins = np.arange(0, max_gap + 0.5, 0.25)
 
     fig, axes = plt.subplots(1, len(roles), figsize=(5 * len(roles), 4), sharex=True, sharey=True)
     for ax, role in zip(axes, roles):
@@ -784,6 +785,58 @@ def plot_roi_validation_heatmap(roi_validation_df, min_prevalence=0.5):
     return fig
 
 
+def plot_roi_validation_heatmap_individual(prevalence_df, min_prevalence=0.5, title_suffix='(individualized bands)'):
+    """Heatmap of ROI peak-prevalence validation using individualized band windows.
+
+    Same layout as :func:`plot_roi_validation_heatmap`: rows = ROI, columns =
+    band x role x group prevalence values. Cells are colored by prevalence
+    (0-1); cells below ``min_prevalence`` are outlined in red.
+
+    Parameters
+    ----------
+    prevalence_df : pd.DataFrame
+        Columns: roi, slow_prev_child_TD, slow_prev_child_ASD,
+        slow_prev_cg_TD, slow_prev_cg_ASD, fast_prev_child_TD,
+        fast_prev_child_ASD, fast_prev_cg_TD, fast_prev_cg_ASD.
+    min_prevalence : float, optional
+        Threshold marked with a red cell outline.
+    title_suffix : str, optional
+        Appended to the figure title to distinguish from the fixed-window version.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    value_cols = [
+        'slow_prev_child_TD', 'slow_prev_child_ASD', 'slow_prev_cg_TD', 'slow_prev_cg_ASD',
+        'fast_prev_child_TD', 'fast_prev_child_ASD', 'fast_prev_cg_TD', 'fast_prev_cg_ASD',
+    ]
+    data = prevalence_df.set_index('roi')[value_cols]
+
+    fig, ax = plt.subplots(figsize=(1.3 * len(value_cols), 0.6 * len(data) + 2))
+    im = ax.imshow(data.values, cmap='viridis', vmin=0, vmax=1, aspect='auto')
+
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            val = data.values[i, j]
+            ax.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=8,
+                    color='white' if val < 0.6 else 'black')
+            if val < min_prevalence:
+                ax.add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, edgecolor='red', lw=2))
+
+    ax.set_xticks(range(len(value_cols)))
+    ax.set_xticklabels(value_cols, rotation=45, ha='right', fontsize=8)
+    ax.set_yticks(range(len(data)))
+    ax.set_yticklabels(data.index, fontsize=9)
+    fig.colorbar(im, ax=ax, label='Prevalence', shrink=0.8)
+    ax.set_title(
+        f'ROI peak prevalence by band, role, and group {title_suffix} (red = below {min_prevalence:.0%})',
+        fontsize=10,
+    )
+    fig.tight_layout()
+    return fig
+
+
 def plot_survival_rate_bars(summary_df, threshold=0.6):
     """Bar chart of ROI x band peak-survival rate, by role and group.
 
@@ -832,7 +885,7 @@ def plot_survival_rate_bars(summary_df, threshold=0.6):
     return fig
 
 
-def plot_stability_heatmap(summary_df, threshold=60.0):
+def plot_stability_heatmap(summary_df, threshold=60.0, title_suffix=''):
     """Heatmap of the percentage of participants with a peak detected in all 3 movies.
 
     Rows = ROI x band. Columns = role x group. Cells below threshold are
@@ -845,6 +898,9 @@ def plot_stability_heatmap(summary_df, threshold=60.0):
         columns: roi, band, role, group, pct_detected_all_3.
     threshold : float, optional
         Percentage cutoff, drawn as a red cell outline below this value.
+    title_suffix : str, optional
+        Appended to the figure title, e.g. to distinguish an individualized-
+        band version from the fixed-window version.
 
     Returns
     -------
@@ -873,7 +929,9 @@ def plot_stability_heatmap(summary_df, threshold=60.0):
     ax.set_yticks(range(pivot.shape[0]))
     ax.set_yticklabels(pivot.index, fontsize=9)
     fig.colorbar(im, ax=ax, label='% detected in all 3 movies', shrink=0.8)
-    ax.set_title(f'Peak detection consistency across movies (red = below {threshold:.0f}%)', fontsize=10)
+    ax.set_title(
+        f'Peak detection consistency across movies{title_suffix} (red = below {threshold:.0f}%)', fontsize=10,
+    )
     fig.tight_layout()
     return fig
 

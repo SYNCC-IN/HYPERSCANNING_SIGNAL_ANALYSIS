@@ -39,9 +39,9 @@ MAX_N_PEAKS = 4
 MIN_PEAK_HEIGHT = 0.05
 APERIODIC_MODE = 'fixed'
 
-GALLERY_CHANNELS = ['Fz', 'Cz', 'Pz', 'O1']
-N_GALLERY_CHILDREN = 23
-N_GALLERY_CAREGIVERS = 23
+GALLERY_CHANNELS = ['F3', 'Fz', 'F4', 'C3', 'Cz', 'C4', 'P3', 'Pz', 'P4']
+N_GALLERY_CHILDREN = 61
+N_GALLERY_CAREGIVERS = 61
 RANDOM_SEED = 42
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ gallery_pids = list(_sample_participants('child', N_GALLERY_CHILDREN)) + \
 for pid in gallery_pids:
     meta = meta_by_pid.loc[pid]
     psd = psd_avg[pid]
-    fig, axes = plt.subplots(2, 2, figsize=(9, 7))
+    fig, axes = plt.subplots(3,3, figsize=(9, 7))
     for ch_name, ax in zip(GALLERY_CHANNELS, axes.flat):
         ch_idx = channel_names.index(ch_name)
         sm = fit_specparam(freqs, psd[ch_idx, :], FREQ_RANGE, PEAK_WIDTH_LIMITS,

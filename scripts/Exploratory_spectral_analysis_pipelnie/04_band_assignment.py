@@ -34,7 +34,10 @@ ROI_CLUSTERS_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / '03_roi_peak
 DERIVED_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / 'derived_data'
 OUTPUT_DIR = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '04_band_assignment')
 
-ASSIGNMENT_ROIS = ['parietal', 'sensorimotor']  # ROIs to assign bands for
+ASSIGNMENT_ROIS = [
+    'frontal-midline', 'sensorimotor', 'central-midline', 'parietal',
+    'occipital', 'lateral-temporal', 'temporo-parietal',
+]  # ROIs to assign bands for
 MIN_GAP = 1.5  # Hz — minimum gap to split into slow/fast
 PRIMARY_ROI = 'parietal'  # for IAF extraction
 FALLBACK_ROI = 'sensorimotor'  # if parietal has no peak

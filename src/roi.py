@@ -1,6 +1,7 @@
 """ROI (region of interest) definitions and averaging."""
 
 import numpy as np
+import pandas as pd
 
 
 def define_rois_theory():
@@ -88,6 +89,99 @@ def validate_roi_two_bands(prevalence_df, roi_channels, slow_window, fast_window
         'slow_viable': slow_prevalence >= min_prevalence,
         'fast_viable': fast_prevalence >= min_prevalence,
     }
+
+
+def validate_roi_individual_bands(peaks_df, band_assignments_df, roi_channels, roi_label,
+                                   slow_window=(3, 7), fast_window=(7, 14)):
+    """Validate ROI peak prevalence using each participant's individualized band windows.
+
+    For each participant appearing in ``peaks_df``, looks up their slow/fast
+    rhythm center frequency and bandwidth (or single dominant rhythm) for this
+    ROI from ``band_assignments_df``, then checks whether any detected peak at
+    ``roi_channels`` falls within the resulting individual frequency window.
+
+    - ``assignment_note == 'two_rhythms'``: the individual slow window is
+      ``[slow_cf - slow_bw, slow_cf + slow_bw]`` and the individual fast
+      window is ``[fast_cf - fast_bw, fast_cf + fast_bw]``; a peak counts as
+      present in a band if its center_freq falls inside that band's window.
+    - ``assignment_note == 'single_dominant'``: the window
+      ``[dominant_cf - dominant_bw, dominant_cf + dominant_bw]`` is compared
+      against the fixed ``slow_window``/``fast_window`` reference ranges, and
+      the participant is counted present in whichever reference range(s) it
+      overlaps. If it overlaps neither, the participant is absent for both
+      bands.
+    - ``assignment_note == 'no_peaks'``, or no band assignment at all for this
+      ROI (participant missing from ``band_assignments_df`` for ``roi_label``):
+      absent for both bands.
+
+    Parameters
+    ----------
+    peaks_df : pd.DataFrame
+        All peaks (e.g. from all_peaks.csv). Columns: participant_id, role,
+        group, channel, center_freq, power, bandwidth.
+    band_assignments_df : pd.DataFrame
+        Band assignments from Step 4. Columns include: participant_id, role,
+        group, roi, slow_cf, slow_bw, fast_cf, fast_bw, dominant_cf,
+        dominant_bw, assignment_note.
+    roi_channels : list of str
+        Channels in this ROI.
+    roi_label : str
+        ROI name — used to filter ``band_assignments_df`` by its 'roi' column.
+    slow_window, fast_window : tuple of float, optional
+        Fixed (low, high) Hz reference ranges used only to classify
+        ``single_dominant`` participants as slow or fast.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per participant (from ``peaks_df``): participant_id, role,
+        group, slow_present (bool), fast_present (bool).
+    """
+    def _any_in_window(freqs, low, high):
+        return bool(((freqs >= low) & (freqs <= high)).any())
+
+    def _windows_overlap(a_low, a_high, b_low, b_high):
+        return a_low <= b_high and b_low <= a_high
+
+    participants = peaks_df[['participant_id', 'role', 'group']].drop_duplicates()
+    roi_assignments = band_assignments_df[band_assignments_df['roi'] == roi_label].set_index('participant_id')
+    roi_peaks = peaks_df[peaks_df['channel'].isin(roi_channels)]
+
+    rows = []
+    for _, prow in participants.iterrows():
+        pid = prow['participant_id']
+        slow_present, fast_present = False, False
+
+        if pid in roi_assignments.index:
+            assignment = roi_assignments.loc[pid]
+            note = assignment['assignment_note']
+            participant_freqs = roi_peaks.loc[roi_peaks['participant_id'] == pid, 'center_freq']
+
+            if note == 'two_rhythms':
+                slow_present = _any_in_window(
+                    participant_freqs, assignment['slow_cf'] - assignment['slow_bw'],
+                    assignment['slow_cf'] + assignment['slow_bw'],
+                )
+                fast_present = _any_in_window(
+                    participant_freqs, assignment['fast_cf'] - assignment['fast_bw'],
+                    assignment['fast_cf'] + assignment['fast_bw'],
+                )
+            elif note == 'single_dominant':
+                dom_low = assignment['dominant_cf'] - assignment['dominant_bw']
+                dom_high = assignment['dominant_cf'] + assignment['dominant_bw']
+                slow_present = _windows_overlap(dom_low, dom_high, *slow_window)
+                fast_present = _windows_overlap(dom_low, dom_high, *fast_window)
+            # 'no_peaks': leave both False
+
+        rows.append({
+            'participant_id': pid,
+            'role': prow['role'],
+            'group': prow['group'],
+            'slow_present': slow_present,
+            'fast_present': fast_present,
+        })
+
+    return pd.DataFrame(rows)
 
 
 def check_peak_survival(channel_peaks_list, roi_peaks, band_window, freq_tolerance=1.0):

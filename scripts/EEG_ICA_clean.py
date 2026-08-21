@@ -20,7 +20,7 @@ proc = ICAPreprocessor(
     target_events=['passive_movies'],
 )
 # Konkretna dyada (np. do debugowania Stage 2)
-#proc.find_eeg_files(dyad_ids=['W_000'])
+proc.find_eeg_files(dyad_ids=['W_017'])
 
 # Kilka konkretnych dyad
 # proc.find_eeg_files(dyad_ids=['W_032', 'W_041', 'W_074', 'W_114'])#
@@ -28,7 +28,7 @@ proc = ICAPreprocessor(
 # proc.find_eeg_files(smoke_test=True, smoke_dyads_n=2)
 
 # Pełne przetwarzanie
-proc.find_eeg_files(smoke_test=False)
+#proc.find_eeg_files(smoke_test=False)
 # %% [Stage 1] FITTING
 # proc.fit_and_save_ica(ica_folder, n_components=15)
 # %% [Stage 2] CLASSIFYING
