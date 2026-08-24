@@ -6,7 +6,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Patch, Rectangle
+
+from src.specparam_utils import extract_fit_quality, fit_specparam
 
 # Consistent color/linestyle conventions used across all artifacts.
 COLORS = {
@@ -16,6 +18,9 @@ COLORS = {
     'caregiver': '#7f8c8d',
 }
 ROLE_LINESTYLE = {'child': '-', 'caregiver': '--'}
+
+# Band-shading colors for the per-participant spectral overview (artifact 6c).
+PARTICIPANT_BAND_COLORS = {'slow': '#4477AA', 'fast': '#EE7733'}
 
 
 def make_montage_info(channel_names, sfreq=128.0, montage_name='standard_1020'):
@@ -524,6 +529,7 @@ def plot_individual_peak_profiles(peaks_df, roi_channels, roi_label, role='child
     ax.set_yticks(range(len(pid_order)))
     ax.set_yticklabels(pid_order, fontsize=5)
     ax.set_xlabel('Center frequency (Hz)')
+    ax.set_xlim((3,15))
     ax.set_title(f'{roi_label} ({role}): individual peak profiles', fontsize=10)
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -531,14 +537,15 @@ def plot_individual_peak_profiles(peaks_df, roi_channels, roi_label, role='child
 
 
 def plot_band_assignment_strips(band_assignments_df, rois):
-    """Strip plot of each participant's slow/fast (or dominant) rhythm assignment.
+    """Strip plot of each participant's slow/fast (or single-rhythm) assignment.
 
     Grid layout: columns = ROI, rows = role (child, caregiver). For each
     participant: slow_cf is plotted as a triangle, fast_cf as a circle,
-    joined by a horizontal line segment; single-dominant participants are
-    plotted as a diamond at dominant_cf. Y-axis is participant_id, sorted by
-    fast_cf (falling back to dominant_cf for single-dominant participants).
-    Participants with no peaks are omitted.
+    joined by a horizontal line segment for two_rhythms participants; a
+    single_slow participant is plotted as a lone triangle at slow_cf, a
+    single_fast participant as a lone circle at fast_cf. Y-axis is
+    participant_id, sorted by fast_cf (falling back to slow_cf for
+    single_slow participants). Participants with no peaks are omitted.
 
     Only participants in the TD or ASD groups are plotted; other group
     labels (e.g. secondary cohorts not part of the TD/ASD comparison) are
@@ -549,7 +556,7 @@ def plot_band_assignment_strips(band_assignments_df, rois):
     band_assignments_df : pd.DataFrame
         Output of assign_bands_all_rois concatenated across participants.
         Must contain columns: participant_id, role, group, roi, slow_cf,
-        fast_cf, dominant_cf, assignment_note.
+        fast_cf, assignment_note.
     rois : list of str
         ROI labels to include as columns.
 
@@ -570,7 +577,7 @@ def plot_band_assignment_strips(band_assignments_df, rois):
             subset = band_assignments_df[
                 (band_assignments_df['role'] == role) & (band_assignments_df['roi'] == roi)
             ].copy()
-            subset['sort_freq'] = subset['fast_cf'].fillna(subset['dominant_cf'])
+            subset['sort_freq'] = subset['fast_cf'].fillna(subset['slow_cf'])
             subset = subset.dropna(subset=['sort_freq']).sort_values('sort_freq')
             pid_order = subset['participant_id'].tolist()
             y_pos = {pid: i for i, pid in enumerate(pid_order)}
@@ -582,8 +589,10 @@ def plot_band_assignment_strips(band_assignments_df, rois):
                     ax.plot([prow['slow_cf'], prow['fast_cf']], [y, y], color=color, lw=1, alpha=0.5, zorder=1)
                     ax.scatter(prow['slow_cf'], y, marker='^', color=color, s=25, zorder=2)
                     ax.scatter(prow['fast_cf'], y, marker='o', color=color, s=25, zorder=2)
-                elif prow['assignment_note'] == 'single_dominant':
-                    ax.scatter(prow['dominant_cf'], y, marker='D', color=color, s=25, zorder=2)
+                elif prow['assignment_note'] == 'single_slow':
+                    ax.scatter(prow['slow_cf'], y, marker='^', color=color, s=25, zorder=2)
+                elif prow['assignment_note'] == 'single_fast':
+                    ax.scatter(prow['fast_cf'], y, marker='o', color=color, s=25, zorder=2)
 
             ax.set_yticks(range(len(pid_order)))
             ax.set_yticklabels(pid_order, fontsize=4)
@@ -597,7 +606,6 @@ def plot_band_assignment_strips(band_assignments_df, rois):
     marker_handles = [
         Line2D([0], [0], marker='^', color='gray', linestyle='none', markersize=6, label='slow'),
         Line2D([0], [0], marker='o', color='gray', linestyle='none', markersize=6, label='fast'),
-        Line2D([0], [0], marker='D', color='gray', linestyle='none', markersize=6, label='dominant'),
     ]
     group_handles = [
         Line2D([0], [0], marker='s', color='none', markerfacecolor=color, markersize=8, label=grp)
@@ -668,7 +676,7 @@ def plot_gap_distribution(band_assignments_df, min_gap):
     two_rhythms = band_assignments_df[band_assignments_df['assignment_note'] == 'two_rhythms']
     roles = ['child', 'caregiver']
     max_gap = two_rhythms['freq_gap'].max() if len(two_rhythms) else min_gap * 2
-    bins = np.arange(0, max_gap + 0.5, 0.5)
+    bins = np.arange(0, max_gap + 0.5, 0.25)
 
     fig, axes = plt.subplots(1, len(roles), figsize=(5 * len(roles), 4), sharex=True, sharey=True)
     for ax, role in zip(axes, roles):
@@ -684,6 +692,81 @@ def plot_gap_distribution(band_assignments_df, min_gap):
     axes[0].set_ylabel('Count')
     fig.suptitle('Slow-fast frequency gap distribution (two-rhythm participants)')
     fig.tight_layout(rect=[0, 0, 1, 0.92])
+    return fig
+
+
+def plot_band_cf_histograms(band_assignments_df, rois, bin_width=0.5, slow_color=None, fast_color=None):
+    """Histograms of merged slow_cf and fast_cf per ROI, role, and group.
+
+    Grid: columns = ROI (in ``rois`` order), rows = role (child, caregiver).
+    Each subplot overlays four histograms: slow_cf and fast_cf (colored by
+    band, as in the per-participant overview), each split into TD and ASD.
+    Group is distinguished by hatching rather than a second color, since
+    color is already used to encode band: TD bars are solid, ASD bars carry
+    a diagonal hatch, both in the same slow/fast color. A dashed vertical
+    line at 7.5 Hz marks the slow/fast seeding boundary for orientation.
+
+    Only non-null values contribute: slow_cf from rows with a slow band
+    (assignment_note 'two_rhythms' or 'single_slow'), fast_cf from rows with
+    a fast band ('two_rhythms' or 'single_fast'). Bin edges are fixed over
+    3-13 Hz so panels are directly comparable to each other and to the
+    step-3 raw-peak histograms.
+
+    Parameters
+    ----------
+    band_assignments_df : pd.DataFrame
+        From band_assignments.csv. Columns: participant_id, role, group, roi,
+        slow_cf, fast_cf, assignment_note.
+    rois : list of str
+        ROI labels, used as column order.
+    bin_width : float, optional
+        Histogram bin width in Hz (range 3-13 Hz).
+    slow_color, fast_color : str or None, optional
+        Colors matching the overview-plot band colors for consistency.
+        Default to the module-level slow/fast colors if None.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    slow_color = slow_color or PARTICIPANT_BAND_COLORS['slow']
+    fast_color = fast_color or PARTICIPANT_BAND_COLORS['fast']
+    roles = ['child', 'caregiver']
+    freq_range = (3, 13)
+    bins = np.arange(freq_range[0], freq_range[1] + bin_width, bin_width)
+    group_hatches = {'TD': None, 'ASD': '//'}
+
+    fig, axes = plt.subplots(len(roles), len(rois), figsize=(3.2 * len(rois), 5.5), sharex=True, sharey=True)
+    axes = np.atleast_2d(axes)
+
+    for row, role in enumerate(roles):
+        for col, roi in enumerate(rois):
+            ax = axes[row, col]
+            subset = band_assignments_df[(band_assignments_df['role'] == role) & (band_assignments_df['roi'] == roi)]
+            for grp in ['TD', 'ASD']:
+                grp_subset = subset[subset['group'] == grp]
+                hatch = group_hatches[grp]
+                ax.hist(grp_subset['slow_cf'].dropna(), bins=bins, color=slow_color, alpha=0.45,
+                        hatch=hatch, edgecolor=slow_color)
+                ax.hist(grp_subset['fast_cf'].dropna(), bins=bins, color=fast_color, alpha=0.45,
+                        hatch=hatch, edgecolor=fast_color)
+            ax.axvline(7.5, color='black', linestyle='--', lw=1, alpha=0.6)
+            if row == 0:
+                ax.set_title(roi, fontsize=9)
+            if col == 0:
+                ax.set_ylabel(f'{role}\ncount', fontsize=8)
+            if row == len(roles) - 1:
+                ax.set_xlabel('Center frequency (Hz)', fontsize=7)
+
+    legend_handles = [
+        Patch(facecolor=slow_color, alpha=0.45, edgecolor=slow_color, label='slow (TD)'),
+        Patch(facecolor=slow_color, alpha=0.45, edgecolor=slow_color, hatch='//', label='slow (ASD)'),
+        Patch(facecolor=fast_color, alpha=0.45, edgecolor=fast_color, label='fast (TD)'),
+        Patch(facecolor=fast_color, alpha=0.45, edgecolor=fast_color, hatch='//', label='fast (ASD)'),
+    ]
+    fig.legend(handles=legend_handles, loc='upper right', fontsize=7)
+    fig.suptitle('Merged band center-frequency distributions (post k-means), by ROI, role, and group')
+    fig.tight_layout(rect=[0, 0, 0.88, 0.93])
     return fig
 
 
@@ -784,6 +867,58 @@ def plot_roi_validation_heatmap(roi_validation_df, min_prevalence=0.5):
     return fig
 
 
+def plot_roi_validation_heatmap_individual(prevalence_df, min_prevalence=0.5, title_suffix='(individualized bands)'):
+    """Heatmap of ROI peak-prevalence validation using individualized band windows.
+
+    Same layout as :func:`plot_roi_validation_heatmap`: rows = ROI, columns =
+    band x role x group prevalence values. Cells are colored by prevalence
+    (0-1); cells below ``min_prevalence`` are outlined in red.
+
+    Parameters
+    ----------
+    prevalence_df : pd.DataFrame
+        Columns: roi, slow_prev_child_TD, slow_prev_child_ASD,
+        slow_prev_cg_TD, slow_prev_cg_ASD, fast_prev_child_TD,
+        fast_prev_child_ASD, fast_prev_cg_TD, fast_prev_cg_ASD.
+    min_prevalence : float, optional
+        Threshold marked with a red cell outline.
+    title_suffix : str, optional
+        Appended to the figure title to distinguish from the fixed-window version.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    value_cols = [
+        'slow_prev_child_TD', 'slow_prev_child_ASD', 'slow_prev_cg_TD', 'slow_prev_cg_ASD',
+        'fast_prev_child_TD', 'fast_prev_child_ASD', 'fast_prev_cg_TD', 'fast_prev_cg_ASD',
+    ]
+    data = prevalence_df.set_index('roi')[value_cols]
+
+    fig, ax = plt.subplots(figsize=(1.3 * len(value_cols), 0.6 * len(data) + 2))
+    im = ax.imshow(data.values, cmap='viridis', vmin=0, vmax=1, aspect='auto')
+
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            val = data.values[i, j]
+            ax.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=8,
+                    color='white' if val < 0.6 else 'black')
+            if val < min_prevalence:
+                ax.add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, edgecolor='red', lw=2))
+
+    ax.set_xticks(range(len(value_cols)))
+    ax.set_xticklabels(value_cols, rotation=45, ha='right', fontsize=8)
+    ax.set_yticks(range(len(data)))
+    ax.set_yticklabels(data.index, fontsize=9)
+    fig.colorbar(im, ax=ax, label='Prevalence', shrink=0.8)
+    ax.set_title(
+        f'ROI peak prevalence by band, role, and group {title_suffix} (red = below {min_prevalence:.0%})',
+        fontsize=10,
+    )
+    fig.tight_layout()
+    return fig
+
+
 def plot_survival_rate_bars(summary_df, threshold=0.6):
     """Bar chart of ROI x band peak-survival rate, by role and group.
 
@@ -832,7 +967,7 @@ def plot_survival_rate_bars(summary_df, threshold=0.6):
     return fig
 
 
-def plot_stability_heatmap(summary_df, threshold=60.0):
+def plot_stability_heatmap(summary_df, threshold=60.0, title_suffix=''):
     """Heatmap of the percentage of participants with a peak detected in all 3 movies.
 
     Rows = ROI x band. Columns = role x group. Cells below threshold are
@@ -845,6 +980,9 @@ def plot_stability_heatmap(summary_df, threshold=60.0):
         columns: roi, band, role, group, pct_detected_all_3.
     threshold : float, optional
         Percentage cutoff, drawn as a red cell outline below this value.
+    title_suffix : str, optional
+        Appended to the figure title, e.g. to distinguish an individualized-
+        band version from the fixed-window version.
 
     Returns
     -------
@@ -873,7 +1011,9 @@ def plot_stability_heatmap(summary_df, threshold=60.0):
     ax.set_yticks(range(pivot.shape[0]))
     ax.set_yticklabels(pivot.index, fontsize=9)
     fig.colorbar(im, ax=ax, label='% detected in all 3 movies', shrink=0.8)
-    ax.set_title(f'Peak detection consistency across movies (red = below {threshold:.0f}%)', fontsize=10)
+    ax.set_title(
+        f'Peak detection consistency across movies{title_suffix} (red = below {threshold:.0f}%)', fontsize=10,
+    )
     fig.tight_layout()
     return fig
 
@@ -929,4 +1069,113 @@ def plot_detection_consistency_heatmap(movie_band_peaks_df, movies, bands=('slow
 
     ax.set_title(title or 'Peak detection consistency: movie x band, per participant', fontsize=10)
     fig.tight_layout()
+    return fig
+
+
+def _shade_band(ax, cf, bw, color, label, y_frac=0.95):
+    """Shade a band window on a spectrum axes and annotate it with cf +/- bw.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes to draw into.
+    cf : float
+        Band center frequency in Hz.
+    bw : float
+        Band bandwidth in Hz. The shaded window is ``[cf - bw, cf + bw]``.
+    color : str
+        Shading and annotation color.
+    label : str
+        Legend label for this band.
+    y_frac : float, optional
+        Vertical position of the annotation, as a fraction of the y-axis
+        range from the bottom. Staggered between adjacent bands so labels
+        don't overlap when the bands are close together.
+    """
+    low, high = cf - bw, cf + bw
+    ax.axvspan(low, high, alpha=0.2, color=color, label=label)
+    y_min, y_max = ax.get_ylim()
+    y_pos = y_min + y_frac * (y_max - y_min)
+    ax.text((low + high) / 2, y_pos, f'{cf:.1f} ± {bw:.1f}', ha='center', va='top',
+             fontsize=6, color=color)
+
+
+def plot_participant_spectral_overview(psd_by_roi, freqs, band_assignments_participant,
+                                        participant_id, role, group, specparam_settings,
+                                        roi_layout):
+    """Per-participant 3x3 grid of ROI spectra with specparam fits and individualized bands.
+
+    Parameters
+    ----------
+    psd_by_roi : dict
+        {roi_label: 1D PSD array} — ROI-averaged (or single-channel) movie-averaged PSD.
+    freqs : np.ndarray
+        Frequency vector matching the PSDs.
+    band_assignments_participant : pd.DataFrame
+        Rows for this participant only, one per ROI. Columns: roi, slow_cf, slow_bw,
+        fast_cf, fast_bw, assignment_note.
+    participant_id, role, group : str
+        For titles.
+    specparam_settings : dict
+        freq_range, peak_width_limits, max_n_peaks, min_peak_height, aperiodic_mode.
+    roi_layout : list of list
+        3x3 nested list of ROI labels; None marks an empty cell.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    assignments = band_assignments_participant.set_index('roi')
+    n_rows = len(roi_layout)
+    n_cols = len(roi_layout[0])
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.5 * n_cols, 3.8 * n_rows))
+    first_panel = next(roi for row in roi_layout for roi in row if roi is not None)
+
+    for row_idx, row_rois in enumerate(roi_layout):
+        for col_idx, roi_name in enumerate(row_rois):
+            ax = axes[row_idx, col_idx]
+            if roi_name is None:
+                ax.axis('off')
+                continue
+
+            model = fit_specparam(freqs, psd_by_roi[roi_name], **specparam_settings)
+            model.plot(ax=ax, add_legend=(roi_name == first_panel))
+            r_squared = extract_fit_quality(model)['r_squared']
+            ax.set_xlim(specparam_settings['freq_range'])
+
+            title_extra = ''
+            if roi_name in assignments.index:
+                assignment = assignments.loc[roi_name]
+                note = assignment['assignment_note']
+                if note == 'two_rhythms':
+                    _shade_band(ax, assignment['slow_cf'], assignment['slow_bw'],
+                                PARTICIPANT_BAND_COLORS['slow'], 'slow band', y_frac=0.95)
+                    _shade_band(ax, assignment['fast_cf'], assignment['fast_bw'],
+                                PARTICIPANT_BAND_COLORS['fast'], 'fast band', y_frac=0.85)
+                elif note in ('single_slow', 'single_fast'):
+                    band = 'slow' if note == 'single_slow' else 'fast'
+                    band_color = PARTICIPANT_BAND_COLORS[band]
+                    _shade_band(ax, assignment[f'{band}_cf'], assignment[f'{band}_bw'],
+                                band_color, f'{band} band')
+                    ax.text(0.02, 0.95, f'single {band} rhythm', transform=ax.transAxes,
+                             fontsize=7, va='top', color=band_color)
+                    title_extra = f' [single {band}]'
+                elif note == 'no_peaks':
+                    ax.text(0.5, 0.5, 'no peaks', transform=ax.transAxes, ha='center', va='center',
+                             fontsize=9, color='gray')
+                    title_extra = ' [no peaks]'
+            else:
+                ax.text(0.5, 0.5, 'no assignment', transform=ax.transAxes, ha='center', va='center',
+                         fontsize=9, color='gray')
+
+            ax.set_title(f'{roi_name} (r2={r_squared:.2f}){title_extra}', fontsize=9)
+
+    band_handles = [
+        Patch(facecolor=PARTICIPANT_BAND_COLORS['slow'], alpha=0.2, label='slow band'),
+        Patch(facecolor=PARTICIPANT_BAND_COLORS['fast'], alpha=0.2, label='fast band'),
+    ]
+    fig.legend(handles=band_handles, loc='upper right', fontsize=8)
+    fig.suptitle(f'{participant_id} ({role}, {group})', fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
     return fig

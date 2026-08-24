@@ -174,3 +174,27 @@ def find_peak_in_window(peaks, freq_window):
     if not in_window:
         return None
     return max(in_window, key=lambda p: p['power'])
+
+
+def find_peak_in_individual_window(peaks, cf, bw):
+    """Find the strongest peak within an individualized band window.
+
+    Window is ``[cf - bw, cf + bw]``. Returns the strongest peak (by power)
+    inside it, or None.
+
+    Parameters
+    ----------
+    peaks : list of dict
+        Detected peaks for one channel/ROI in one movie:
+        [{center_freq, power, bandwidth}, ...].
+    cf : float
+        Band center frequency (``slow_cf`` or ``fast_cf`` from Step 4).
+    bw : float
+        Band bandwidth (``slow_bw`` or ``fast_bw`` from Step 4).
+
+    Returns
+    -------
+    dict or None
+        The strongest peak (by power) within the window, or None if no peak found.
+    """
+    return find_peak_in_window(peaks, (cf - bw, cf + bw))

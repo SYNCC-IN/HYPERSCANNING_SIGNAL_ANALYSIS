@@ -48,10 +48,15 @@ FREQ_BINS = [(3, 5), (5, 7), (7, 9), (9, 11), (11, 13)]
 FREQ_TOLERANCE = 1.0    # Hz — max distance to join a cluster
 MIN_CHANNELS = 3        # minimum channels for a "robust" cluster
 WITHIN_ROI_FREQ_TOLERANCE = 1.0  # Hz — max distance to join a within-ROI cluster
-CLUSTERS_3A = ['frontal-lateral', 'frontal-midline', 'central-midline', 'sensorimotor', 'parietal', 'occipital', 'temporal'] #['frontal']
+CLUSTERS_3A = ['frontal-midline', 'frontal-lateral', 'central-midline', 'sensorimotor', 'parietal', 'occipital', 'lateral-temporal', 'temporo-parietal']
 POSTERIOR_CHANNELS = ['P3', 'Pz', 'P4', 'O1', 'O2']
 N_EXEMPLARS = 3
 RANDOM_SEED = 42
+
+# Column order for artifact 3g (within-ROI cluster scatter): the 7 ROIs from
+# Step 5's ROIS definition (excludes frontal-lateral, which only exists in the
+# broader CHANNEL_CLUSTERS grouping below, not in the ROI set).
+ROI_ORDER_3G = ['frontal-midline', 'sensorimotor', 'central-midline', 'parietal', 'occipital', 'lateral-temporal', 'temporo-parietal']
 
 # Must match the specparam freq_range used in scripts/02_run_specparam.py, so
 # artifact 3a's histogram window doesn't silently disagree with the fit range.
@@ -66,19 +71,22 @@ CHANNEL_NAMES = [
 ]
 
 CHANNEL_CLUSTERS = {
-    'frontal-lateral': ['F3', 'F4'],
-    'frontal-midline': ['Fz'],
-    'central-midline': ['Cz'],
-    'sensorimotor':   ['C3', 'C4'],
-    'parietal':  ['P3', 'Pz', 'P4'],
-    'occipital': ['O1', 'O2'],
-    'temporal':  ['T7', 'T8', 'P7', 'P8'],
+    'frontal-midline':  ['Fz'],
+    'frontal-lateral':  ['F3', 'F4'],
+    'central-midline':  ['Cz'],
+    'sensorimotor':     ['C3', 'C4'],
+    'parietal':         ['P3', 'Pz', 'P4'],
+    'occipital':        ['O1', 'O2'],
+    'lateral-temporal': ['T7', 'T8'],
+    'temporo-parietal': ['P7', 'P8'],
 }
 
 # ROIs examined for within- vs between-subject bimodality of the dominant rhythm.
 DIAGNOSTIC_ROIS = {
-    'sensorimotor': ['C3', 'C4'],
-    'parietal':     ['P3', 'Pz', 'P4'],
+    'sensorimotor':     ['C3', 'C4'],
+    'parietal':         ['P3', 'Pz', 'P4'],
+    'lateral-temporal': ['T7', 'T8'],
+    'temporo-parietal': ['P7', 'P8'],
 }
 
 # ---------------------------------------------------------------------------
@@ -265,7 +273,7 @@ print(f'Saved {len(roi_peak_clusters_df)} within-ROI peak clusters to {OUT_ROI_C
 # ---------------------------------------------------------------------------
 # Artifact 3g - Within-ROI cluster scatter (frequency vs. summed power)
 # ---------------------------------------------------------------------------
-fig = plot_roi_cluster_scatter(roi_peak_clusters_df, group_colors={'TD': COLORS['TD'], 'ASD': COLORS['ASD']})
+fig = plot_roi_cluster_scatter(roi_peak_clusters_df, group_colors={'TD': COLORS['TD'], 'ASD': COLORS['ASD']}, roi_order=ROI_ORDER_3G)
 fig.savefig(OUT_ROI_CLUSTERS / 'roi_cluster_scatter.png', dpi=300)
 plt.close(fig)
 print(f'Saved artifact 3g to {OUT_ROI_CLUSTERS}')
@@ -352,6 +360,8 @@ print(f'Saved artifact 3i to {OUT_BIMODALITY}')
 individual_filenames = {
     'sensorimotor': 'individual_peaks_sensorimotor.png',
     'parietal': 'individual_peaks_parietal.png',
+    'lateral-temporal': 'individual_peaks_lateral-temporal.png',
+    'temporo-parietal': 'individual_peaks_temporo-parietal.png',
 }
 for roi_label, roi_channels in DIAGNOSTIC_ROIS.items():
     cluster_subset = roi_peak_clusters_df[

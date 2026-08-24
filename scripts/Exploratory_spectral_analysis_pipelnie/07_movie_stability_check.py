@@ -23,7 +23,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.io_utils import ensure_dir
 from src.roi import average_psd_within_roi
-from src.specparam_utils import extract_peak_params, find_peak_in_window, fit_specparam
+from src.specparam_utils import (
+    extract_peak_params, find_peak_in_individual_window, find_peak_in_window, fit_specparam,
+)
 from src.viz import COLORS, plot_detection_consistency_heatmap, plot_stability_heatmap
 
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -36,7 +38,7 @@ ROI_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / '05_roi_definition'
 BAND_ASSIGNMENT_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / '04_band_assignment'
 OUTPUT_DIR = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '07_movie_stability')
 
-STABILITY_ROI_NAMES = ['sensorimotor', 'parietal', 'frontal-midline', 'central-midline']
+STABILITY_ROI_NAMES = ['sensorimotor', 'parietal', 'frontal-midline', 'central-midline', 'lateral-temporal', 'temporo-parietal']
 # Include single-channel ROIs here — stability is about per-movie consistency,
 # not ROI averaging, so single channels are relevant (unlike Step 6).
 PRIMARY_ROI = 'parietal'  # used for artifact 7c, which shows one ROI at a time
@@ -74,23 +76,69 @@ for roi_name in band_assignments_df['roi'].unique():
     two_rhythm_rate = (subset['assignment_note'] == 'two_rhythms').mean()
     print(f'[step 4 cross-check] {roi_name}: {two_rhythm_rate:.0%} of participant x role rows assigned two_rhythms')
 
+def _windows_overlap(a_low, a_high, b_low, b_high):
+    return a_low <= b_high and b_low <= a_high
+
+
 # ---------------------------------------------------------------------------
 # 2. Fit specparam per participant x ROI x movie, find slow/fast peaks
+#    (both fixed-window and individualized-window)
 # ---------------------------------------------------------------------------
 movie_band_rows = []
+movie_band_rows_individual = []
 for pid, movie_psds in psd_by_movie.items():
     meta = participant_meta.loc[pid]
     for roi_name, roi_channels in STABILITY_ROIS.items():
         roi_channels_avail = [ch for ch in roi_channels if ch in channel_names]
+
+        # Individualized band boundaries for this participant x ROI, from the
+        # movie-averaged assignment in Step 4 — looked up per-ROI, not
+        # borrowed from a primary ROI.
+        assignment_rows = band_assignments_df[
+            (band_assignments_df['participant_id'] == pid) & (band_assignments_df['roi'] == roi_name)
+        ]
+        individual_bands = []
+        if len(assignment_rows) > 0:
+            assignment = assignment_rows.iloc[0]
+            note = assignment['assignment_note']
+            if note == 'two_rhythms':
+                individual_bands = [
+                    ('slow', assignment['slow_cf'], assignment['slow_bw']),
+                    ('fast', assignment['fast_cf'], assignment['fast_bw']),
+                ]
+            elif note == 'single_slow':
+                dom_low = assignment['slow_cf'] - assignment['slow_bw']
+                dom_high = assignment['slow_cf'] + assignment['slow_bw']
+                if _windows_overlap(dom_low, dom_high, *SLOW_FREQ_WINDOW):
+                    individual_bands.append(('slow', assignment['slow_cf'], assignment['slow_bw']))
+            elif note == 'single_fast':
+                dom_low = assignment['fast_cf'] - assignment['fast_bw']
+                dom_high = assignment['fast_cf'] + assignment['fast_bw']
+                if _windows_overlap(dom_low, dom_high, *FAST_FREQ_WINDOW):
+                    individual_bands.append(('fast', assignment['fast_cf'], assignment['fast_bw']))
+            # 'no_peaks' (or no assignment row at all): individual_bands stays
+            # empty, so this participant x ROI is excluded from the
+            # individualized stability calc entirely.
+
         for movie in MOVIES:
             if movie not in movie_psds:
                 continue
             roi_psd = average_psd_within_roi(movie_psds[movie], channel_names, roi_channels_avail)
             model = fit_specparam(freqs, roi_psd, **SPECPARAM_SETTINGS)
             peaks = extract_peak_params(model)
+
             for band_name, band_window in [('slow', SLOW_FREQ_WINDOW), ('fast', FAST_FREQ_WINDOW)]:
                 peak = find_peak_in_window(peaks, band_window)
                 movie_band_rows.append({
+                    'participant_id': pid, 'role': meta['role'], 'group': meta['group'],
+                    'roi': roi_name, 'band': band_name, 'movie': movie,
+                    'center_freq': peak['center_freq'] if peak else np.nan,
+                    'power': peak['power'] if peak else np.nan,
+                })
+
+            for band_name, cf, bw in individual_bands:
+                peak = find_peak_in_individual_window(peaks, cf, bw)
+                movie_band_rows_individual.append({
                     'participant_id': pid, 'role': meta['role'], 'group': meta['group'],
                     'roi': roi_name, 'band': band_name, 'movie': movie,
                     'center_freq': peak['center_freq'] if peak else np.nan,
@@ -101,6 +149,11 @@ movie_band_peaks_df = pd.DataFrame(movie_band_rows)
 movie_band_peaks_df.to_csv(OUTPUT_DIR / 'movie_band_peaks.csv', index=False)
 print(f'Fitted specparam for {len(psd_by_movie)} participants x {len(STABILITY_ROIS)} ROIs x '
       f'{len(MOVIES)} movies x 2 bands.')
+
+movie_band_peaks_individual_df = pd.DataFrame(movie_band_rows_individual)
+movie_band_peaks_individual_df.to_csv(OUTPUT_DIR / 'movie_band_peaks_individual.csv', index=False)
+print(f'Found individualized-band peaks for {len(movie_band_peaks_individual_df)} '
+      f'participant x roi x band x movie rows.')
 
 # ---------------------------------------------------------------------------
 # 3. Per participant x ROI x band stability metrics across the 3 movies
@@ -127,6 +180,32 @@ for keys, group_df in movie_band_peaks_df.groupby(group_cols):
 movie_stability_df = pd.DataFrame(stability_rows)
 movie_stability_df.to_csv(OUTPUT_DIR / 'movie_stability.csv', index=False)
 print(f'Saved per-participant stability metrics for {len(movie_stability_df)} participant x roi x band rows.')
+
+# ---------------------------------------------------------------------------
+# 3b. Same stability metrics, individualized band windows
+# ---------------------------------------------------------------------------
+stability_rows_individual = []
+for keys, group_df in movie_band_peaks_individual_df.groupby(group_cols):
+    pid, role, group, roi_name, band_name = keys
+    cf_by_movie = group_df.set_index('movie')['center_freq'].reindex(MOVIES)
+    detected = cf_by_movie.dropna()
+    n_movies_detected = len(detected)
+    max_shift = float(detected.max() - detected.min()) if n_movies_detected >= 2 else np.nan
+    mean_cf = float(detected.mean()) if n_movies_detected >= 1 else np.nan
+    cf_range = float(detected.max() - detected.min()) if n_movies_detected >= 2 else np.nan
+    stability_rows_individual.append({
+        'participant_id': pid, 'role': role, 'group': group, 'roi': roi_name, 'band': band_name,
+        **{f'cf_{movie}': cf_by_movie.get(movie, np.nan) for movie in MOVIES},
+        'n_movies_detected': n_movies_detected,
+        'max_shift': max_shift,
+        'mean_cf': mean_cf,
+        'cf_range': cf_range,
+    })
+
+movie_stability_individual_df = pd.DataFrame(stability_rows_individual)
+movie_stability_individual_df.to_csv(OUTPUT_DIR / 'movie_stability_individual.csv', index=False)
+print(f'Saved individualized-band stability metrics for {len(movie_stability_individual_df)} '
+      f'participant x roi x band rows.')
 
 # ---------------------------------------------------------------------------
 # Artifact 7a - Bland-Altman plots, per ROI x band
@@ -217,3 +296,59 @@ fig = plot_detection_consistency_heatmap(
 fig.savefig(OUTPUT_DIR / 'detection_consistency_heatmap.png', dpi=300)
 plt.close(fig)
 print(f'Saved artifact 7c to {OUTPUT_DIR}')
+
+# ---------------------------------------------------------------------------
+# Artifact 7d - Stability summary table and heatmap, individualized bands
+# ---------------------------------------------------------------------------
+summary_rows_individual = []
+for roi_name in STABILITY_ROIS:
+    for band_name in ['slow', 'fast']:
+        for role in ['child', 'caregiver']:
+            for group in ['TD', 'ASD']:
+                subset = movie_stability_individual_df[
+                    (movie_stability_individual_df['roi'] == roi_name)
+                    & (movie_stability_individual_df['band'] == band_name)
+                    & (movie_stability_individual_df['role'] == role)
+                    & (movie_stability_individual_df['group'] == group)
+                ]
+                n_participants = subset['participant_id'].nunique()
+                detected_all_3 = subset[subset['n_movies_detected'] == 3]
+                n_detected_all_3 = len(detected_all_3)
+                pct_detected_all_3 = 100 * n_detected_all_3 / n_participants if n_participants > 0 else np.nan
+                mean_max_shift = detected_all_3['max_shift'].mean() if len(detected_all_3) else np.nan
+                pct_shift_over_2hz = (
+                    100 * (detected_all_3['max_shift'] > MAX_ACCEPTABLE_SHIFT).mean() if len(detected_all_3) else np.nan
+                )
+                mean_cf_range = detected_all_3['cf_range'].mean() if len(detected_all_3) else np.nan
+                summary_rows_individual.append({
+                    'roi': roi_name, 'band': band_name, 'role': role, 'group': group,
+                    'n_participants': n_participants,
+                    'n_detected_all_3': n_detected_all_3,
+                    'pct_detected_all_3': round(pct_detected_all_3, 1) if not np.isnan(pct_detected_all_3) else np.nan,
+                    'mean_max_shift': round(mean_max_shift, 3) if not np.isnan(mean_max_shift) else np.nan,
+                    'pct_shift_over_2Hz': round(pct_shift_over_2hz, 1) if not np.isnan(pct_shift_over_2hz) else np.nan,
+                    'mean_cf_range': round(mean_cf_range, 3) if not np.isnan(mean_cf_range) else np.nan,
+                })
+
+movie_stability_summary_individual_df = pd.DataFrame(summary_rows_individual)
+movie_stability_summary_individual_df.to_csv(OUTPUT_DIR / 'movie_stability_summary_individual.csv', index=False)
+print(movie_stability_summary_individual_df.to_string(index=False))
+
+fig = plot_stability_heatmap(movie_stability_summary_individual_df, threshold=60.0, title_suffix=' (individualized bands)')
+fig.savefig(OUTPUT_DIR / 'movie_stability_heatmap_individual.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 7d to {OUTPUT_DIR}')
+
+# ---------------------------------------------------------------------------
+# Artifact 7e - Detection consistency heatmap, individualized bands (primary ROI)
+# ---------------------------------------------------------------------------
+primary_roi_peaks_individual_df = movie_band_peaks_individual_df[
+    movie_band_peaks_individual_df['roi'] == PRIMARY_ROI
+]
+fig = plot_detection_consistency_heatmap(
+    primary_roi_peaks_individual_df, movies=MOVIES, bands=('slow', 'fast'),
+    title=f'Peak detection consistency: movie x band, per participant, individualized bands ({PRIMARY_ROI} ROI)',
+)
+fig.savefig(OUTPUT_DIR / 'detection_consistency_heatmap_individual.png', dpi=300)
+plt.close(fig)
+print(f'Saved artifact 7e to {OUTPUT_DIR}')
