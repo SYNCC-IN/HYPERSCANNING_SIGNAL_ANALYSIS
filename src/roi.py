@@ -104,12 +104,13 @@ def validate_roi_individual_bands(peaks_df, band_assignments_df, roi_channels, r
       ``[slow_cf - slow_bw, slow_cf + slow_bw]`` and the individual fast
       window is ``[fast_cf - fast_bw, fast_cf + fast_bw]``; a peak counts as
       present in a band if its center_freq falls inside that band's window.
-    - ``assignment_note == 'single_dominant'``: the window
-      ``[dominant_cf - dominant_bw, dominant_cf + dominant_bw]`` is compared
-      against the fixed ``slow_window``/``fast_window`` reference ranges, and
-      the participant is counted present in whichever reference range(s) it
-      overlaps. If it overlaps neither, the participant is absent for both
-      bands.
+    - ``assignment_note == 'single_slow'``: the window
+      ``[slow_cf - slow_bw, slow_cf + slow_bw]`` is compared against the
+      fixed ``slow_window`` reference range, and the participant is counted
+      present for the slow band only if it overlaps. Never counted present
+      for the fast band.
+    - ``assignment_note == 'single_fast'``: analogous, using
+      ``[fast_cf - fast_bw, fast_cf + fast_bw]`` against ``fast_window``.
     - ``assignment_note == 'no_peaks'``, or no band assignment at all for this
       ROI (participant missing from ``band_assignments_df`` for ``roi_label``):
       absent for both bands.
@@ -121,15 +122,15 @@ def validate_roi_individual_bands(peaks_df, band_assignments_df, roi_channels, r
         group, channel, center_freq, power, bandwidth.
     band_assignments_df : pd.DataFrame
         Band assignments from Step 4. Columns include: participant_id, role,
-        group, roi, slow_cf, slow_bw, fast_cf, fast_bw, dominant_cf,
-        dominant_bw, assignment_note.
+        group, roi, slow_cf, slow_bw, fast_cf, fast_bw, assignment_note.
     roi_channels : list of str
         Channels in this ROI.
     roi_label : str
         ROI name — used to filter ``band_assignments_df`` by its 'roi' column.
     slow_window, fast_window : tuple of float, optional
-        Fixed (low, high) Hz reference ranges used only to classify
-        ``single_dominant`` participants as slow or fast.
+        Fixed (low, high) Hz reference ranges used to confirm a
+        ``single_slow``/``single_fast`` participant's window plausibly
+        overlaps the expected band before counting it present.
 
     Returns
     -------
@@ -166,10 +167,13 @@ def validate_roi_individual_bands(peaks_df, band_assignments_df, roi_channels, r
                     participant_freqs, assignment['fast_cf'] - assignment['fast_bw'],
                     assignment['fast_cf'] + assignment['fast_bw'],
                 )
-            elif note == 'single_dominant':
-                dom_low = assignment['dominant_cf'] - assignment['dominant_bw']
-                dom_high = assignment['dominant_cf'] + assignment['dominant_bw']
+            elif note == 'single_slow':
+                dom_low = assignment['slow_cf'] - assignment['slow_bw']
+                dom_high = assignment['slow_cf'] + assignment['slow_bw']
                 slow_present = _windows_overlap(dom_low, dom_high, *slow_window)
+            elif note == 'single_fast':
+                dom_low = assignment['fast_cf'] - assignment['fast_bw']
+                dom_high = assignment['fast_cf'] + assignment['fast_bw']
                 fast_present = _windows_overlap(dom_low, dom_high, *fast_window)
             # 'no_peaks': leave both False
 

@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.io_utils import ensure_dir
 from src.roi import average_psd_within_roi, check_peak_survival
 from src.specparam_utils import extract_fit_quality, extract_peak_params, fit_specparam
-from src.viz import plot_survival_rate_bars
+from src.viz import plot_participant_spectral_overview, plot_survival_rate_bars
 
 plt.style.use('seaborn-v0_8-whitegrid')
 
@@ -36,6 +36,13 @@ ROI_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / '05_roi_definition'
 BAND_ASSIGNMENT_DIR = PROJECT_ROOT / 'Exploratory_spectral_analysis' / '04_band_assignment'
 OUTPUT_FITS = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '06_roi_specparam_rerun')
 OUTPUT_GATE = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '06_roi_quality_gate')
+OUTPUT_OVERVIEW = ensure_dir(PROJECT_ROOT / 'Exploratory_spectral_analysis' / '06_participant_spectral_overview')
+
+ROI_LAYOUT = [
+    ['frontal-midline', 'central-midline', None],
+    ['sensorimotor', 'parietal', 'occipital'],
+    ['lateral-temporal', 'temporo-parietal', None],
+]
 
 SPECPARAM_SETTINGS = {
     'freq_range': (3, 14),
@@ -242,3 +249,23 @@ else:
 
 (OUTPUT_GATE / 'QUALITY_GATE_NOTES.md').write_text('\n'.join(lines) + '\n')
 print(f'Saved QUALITY_GATE_NOTES.md to {OUTPUT_GATE}')
+
+# ---------------------------------------------------------------------------
+# Artifact 6c - Per-participant spectral overview, all 7 ROIs, individualized bands
+# ---------------------------------------------------------------------------
+for pid, psd in psd_avg.items():
+    meta = participant_meta.loc[pid]
+    psd_by_roi = {}
+    for roi_name, info in roi_definitions.items():
+        roi_channels_avail = [ch for ch in info['channels'] if ch in channel_names]
+        psd_by_roi[roi_name] = average_psd_within_roi(psd, channel_names, roi_channels_avail)
+
+    participant_assignments = band_assignments_df[band_assignments_df['participant_id'] == pid]
+    fig = plot_participant_spectral_overview(
+        psd_by_roi, freqs, participant_assignments, pid, meta['role'], meta['group'],
+        SPECPARAM_SETTINGS, ROI_LAYOUT,
+    )
+    fig.savefig(OUTPUT_OVERVIEW / f'{pid}_spectral_overview.png', dpi=300)
+    plt.close(fig)
+
+print(f'Saved artifact 6c ({len(psd_avg)} participants) to {OUTPUT_OVERVIEW}')

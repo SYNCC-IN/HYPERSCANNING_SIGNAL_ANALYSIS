@@ -188,11 +188,9 @@ def find_peak_in_individual_window(peaks, cf, bw):
         Detected peaks for one channel/ROI in one movie:
         [{center_freq, power, bandwidth}, ...].
     cf : float
-        Band center frequency (``slow_cf``, ``fast_cf``, or ``dominant_cf``
-        from Step 4).
+        Band center frequency (``slow_cf`` or ``fast_cf`` from Step 4).
     bw : float
-        Band bandwidth (``slow_bw``, ``fast_bw``, or ``dominant_bw`` from
-        Step 4).
+        Band bandwidth (``slow_bw`` or ``fast_bw`` from Step 4).
 
     Returns
     -------

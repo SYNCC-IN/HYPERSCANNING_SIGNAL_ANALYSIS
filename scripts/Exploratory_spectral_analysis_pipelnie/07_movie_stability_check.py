@@ -106,13 +106,16 @@ for pid, movie_psds in psd_by_movie.items():
                     ('slow', assignment['slow_cf'], assignment['slow_bw']),
                     ('fast', assignment['fast_cf'], assignment['fast_bw']),
                 ]
-            elif note == 'single_dominant':
-                dom_low = assignment['dominant_cf'] - assignment['dominant_bw']
-                dom_high = assignment['dominant_cf'] + assignment['dominant_bw']
+            elif note == 'single_slow':
+                dom_low = assignment['slow_cf'] - assignment['slow_bw']
+                dom_high = assignment['slow_cf'] + assignment['slow_bw']
                 if _windows_overlap(dom_low, dom_high, *SLOW_FREQ_WINDOW):
-                    individual_bands.append(('slow', assignment['dominant_cf'], assignment['dominant_bw']))
+                    individual_bands.append(('slow', assignment['slow_cf'], assignment['slow_bw']))
+            elif note == 'single_fast':
+                dom_low = assignment['fast_cf'] - assignment['fast_bw']
+                dom_high = assignment['fast_cf'] + assignment['fast_bw']
                 if _windows_overlap(dom_low, dom_high, *FAST_FREQ_WINDOW):
-                    individual_bands.append(('fast', assignment['dominant_cf'], assignment['dominant_bw']))
+                    individual_bands.append(('fast', assignment['fast_cf'], assignment['fast_bw']))
             # 'no_peaks' (or no assignment row at all): individual_bands stays
             # empty, so this participant x ROI is excluded from the
             # individualized stability calc entirely.
