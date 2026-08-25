@@ -16,9 +16,56 @@ In this repo, we develop Python tools to operate and analyze multimodal data, i.
 Currently, the tools are tailored for the experimental setup executed at the University of Warsaw as a part of the SYNCC-IN project.
 
 These experiments consist of three major parts: SECORE, passive MOVIE viewing, and free TALK.
-The exemplary processing 'scripts warsaw_pilot_data.py' and 'warsaw_pilot_data_with_ICA.py' require that in your local repo there is a folder 'DATA' containing exemplary diade data 'W_010'
 
 We hope that they can be adapted to the paradigms of other Partners.
+
+## Current data pipeline
+
+The repository is organized around a linear processing chain. Each stage reads the
+previous stage's output and writes to its own folder, so a stage can be re-run without
+repeating earlier ones.
+
+1. **Raw import.** Raw SVAROG EEG/ECG and Pupil-Labs eye-tracking files recorded at
+   UW live in `UNIWAW_RAW_DATA`. `src/dataloader.py`'s `create_multimodal_data(...)`
+   (backed by the `MultimodalData` class in `src/data_structures.py`) reads them into
+   the project's internal, unified in-memory format — see
+   [docs/data_structure_spec.md](docs/data_structure_spec.md).
+2. **Per-task NCDF export (preferred pipeline input).** `src/export.py`'s
+   `export_passive_and_talk_data(...)` loads each dyad via step 1 and exports two
+   continuous chunks per modality/member — `passive_movies` (Peppa, Incredibles,
+   Brave back to back) and `talk` — to NetCDF. This is run in batch by
+   [scripts/export_dyade_to_ncdf_by_task_batch.py](scripts/export_dyade_to_ncdf_by_task_batch.py)
+   (per-dyad example: [scripts/export_dyade_to_ncdf_by_task_demo.py](scripts/export_dyade_to_ncdf_by_task_demo.py)),
+   producing the `UNIWAW_EEG_exported_BY_TASKS` folder tree:
+   `UNIWAW_EEG_exported_BY_TASKS/<MODALITY>/<dyad_id>/<child|caregiver>/<dyad_id>_<MODALITY>_<ch|cg>_<passive_movies|talk>.nc`.
+   **`UNIWAW_EEG_exported_BY_TASKS` is the preferred input for all downstream
+   analysis pipelines** — prefer it over the older per-event export described under
+   [Older single-event export API](#older-single-event-export-api) below.
+3. **EEG ICA cleaning.** [scripts/EEG_ICA_clean.py](scripts/EEG_ICA_clean.py) drives
+   `src.ica_preprocessing.ICAPreprocessor` over the `passive_movies` NCDF files from
+   step 2, in three stages: fit ICA (`fit_and_save_ica`), classify components with
+   ICLabel (`classify_and_save_labels`, requires manual QC review of the saved
+   CSV/figures), and apply the reviewed exclusions (`apply_ica_and_save`). Cleaned EEG
+   is written under `UNIWAW_EEG_exported_BY_TASKS/ICA_output/EEG_ICA_CLEANED/<dyad_id>/<dyad_id>_EEG_<ch|cg>_passive_movies_cleaned.nc`.
+   **This `EEG_ICA_CLEANED` folder is the clean-EEG input that downstream analyses
+   should use.**
+4. **Analysis pipelines.** Downstream scripts read cleaned EEG NetCDF files via
+   `src/io_utils.py` (`get_participant_files`, `load_eeg_nc`, `trim_to_event_window`).
+   [scripts/Exploratory_spectral_analysis_pipelnie/](scripts/Exploratory_spectral_analysis_pipelnie/)
+   is the reference example of a full pipeline built this way — see its section under
+   [docs/architecture_diagram.md](docs/architecture_diagram.md) for how it is composed
+   from `src/` functions.
+
+`data/` in this repository (e.g. `data/W_030/`, `data/UNIWAW_imported/`) is a small
+local sample dataset used for unit tests, demos, and the code examples further down in
+this README — it is **not** the production dataset, which lives on the
+SYNCC-IN Google Drive under `UNIWAW_RAW_DATA` / `UNIWAW_EEG_exported_BY_TASKS`
+(paths hard-coded at the top of the scripts above; anyone else running them needs to
+point those paths at their own mount of that Drive folder).
+
+`src/warsaw_pilot_data.py` is an older, standalone example pipeline (HRV/EEG/combined
+DTF analysis) that predates the pipeline above and operates on the small local `data/`
+sample only; it is not part of the current production data flow.
 
 ## Data structure update (v2.4)
 
@@ -83,7 +130,14 @@ print(report['is_consistent'])
 print(report['eeg_et_start_consistency'])
 ```
 
-## Xarray export quickstart
+## Older single-event export API
+
+The example below uses `export_to_xarray(...)`, which exports one modality/member/
+**event** at a time (e.g. just `'Incredibles'`) to the local `data/UNIWAW_imported/`
+demo folder. This is the older, lower-level export API described in full in
+[docs/export_ncdf_guide.md](docs/export_ncdf_guide.md); for real analysis work, use
+the per-task export described in [Current data pipeline](#current-data-pipeline)
+above instead.
 
 ```python
 from src.dataloader import create_multimodal_data

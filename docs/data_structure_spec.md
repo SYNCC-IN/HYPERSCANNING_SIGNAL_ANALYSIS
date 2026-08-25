@@ -15,7 +15,16 @@ This document defines the unified **Python data structure** for handling multimo
 The structure is designed for transparent integration across different signal types, maintaining synchronisation and
 consistent metadata.
 
-In order to popoulate the data-structure, the expected directory-structure with raw data is:
+`MultimodalData` is the **internal format** produced by Stage 1 of the project's data
+pipeline (raw import). It is not consumed directly by analysis pipelines — those read
+NetCDF files exported from it in Stage 2 and cleaned in Stage 3. See the project
+[README](../README.md#current-data-pipeline) and
+[docs/architecture_diagram.md](architecture_diagram.md#current-production-pipeline)
+for the full pipeline, and [docs/export_ncdf_guide.md](export_ncdf_guide.md) for how
+`MultimodalData` is exported.
+
+In order to popoulate the data-structure, the expected directory-structure with raw data is (`<dyad_id>` here is
+one dyad's subfolder under `UNIWAW_RAW_DATA`, or under the small local `data/` sample used for tests/demos):
 
 ```
 data_base_path/

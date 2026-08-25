@@ -4,6 +4,39 @@
 **Last updated:** 2026-05-06  
 **Author:** Joanna Duda-Goławska/Jarosław Żygierewicz
 
+## Current Production Pipeline
+
+The diagrams further down describe the internal loading/processing mechanics of
+`create_multimodal_data()` and `MultimodalData` in detail (Stage 1 below). In
+production, that internal format is not consumed directly by analysis code — it
+is exported to NetCDF and cleaned first. The full chain, end to end:
+
+```mermaid
+flowchart LR
+    RAW["UNIWAW_RAW_DATA<br/>(SVAROG EEG/ECG + Pupil-Labs ET,<br/>Google-Drive-mounted)"]
+    INTERNAL["MultimodalData<br/>(internal format)<br/>src.dataloader.create_multimodal_data()"]
+    EXPORTED["UNIWAW_EEG_exported_BY_TASKS<br/>one .nc per modality/member/task<br/>(passive_movies, talk)<br/>src.export.export_passive_and_talk_data()"]
+    CLEANED["UNIWAW_EEG_exported_BY_TASKS/<br/>ICA_output/EEG_ICA_CLEANED<br/>src.ica_preprocessing.ICAPreprocessor"]
+    ANALYSIS["Analysis pipelines<br/>src.io_utils + scripts/*<br/>e.g. Exploratory_spectral_analysis_pipelnie/"]
+
+    RAW --> INTERNAL --> EXPORTED --> CLEANED --> ANALYSIS
+
+    style RAW fill:#e1f5ff
+    style INTERNAL fill:#f3e5f5
+    style EXPORTED fill:#fff9c4
+    style CLEANED fill:#c8e6c9
+    style ANALYSIS fill:#ffe0b2
+```
+
+1. **Raw import** — `src.dataloader.create_multimodal_data(data_base_path=<UNIWAW_RAW_DATA>, dyad_id=...)` reads raw SVAROG/ET files into the internal `MultimodalData` object (see the diagrams below for how this stage works internally).
+2. **Per-task export (preferred pipeline input)** — `src.export.export_passive_and_talk_data(...)`, run in batch by [scripts/export_dyade_to_ncdf_by_task_batch.py](../scripts/export_dyade_to_ncdf_by_task_batch.py), writes two chunks per modality/member (`passive_movies`, `talk`) to `UNIWAW_EEG_exported_BY_TASKS/<MODALITY>/<dyad_id>/<child|caregiver>/<dyad_id>_<MODALITY>_<ch|cg>_<task>.nc`. This folder is the preferred input for all analysis pipelines — see [docs/export_ncdf_guide.md](export_ncdf_guide.md#preferred-export-by-task-ncdf-export).
+3. **EEG ICA cleaning** — [scripts/EEG_ICA_clean.py](../scripts/EEG_ICA_clean.py) drives `src.ica_preprocessing.ICAPreprocessor` (fit → ICLabel classify → apply, with a manual QC review step in between) over the `passive_movies` chunks, writing cleaned EEG to `UNIWAW_EEG_exported_BY_TASKS/ICA_output/EEG_ICA_CLEANED/<dyad_id>/<dyad_id>_EEG_<ch|cg>_passive_movies_cleaned.nc`.
+4. **Analysis** — pipelines read the cleaned EEG via `src.io_utils` (`get_participant_files`, `load_eeg_nc`, `trim_to_event_window`). [scripts/Exploratory_spectral_analysis_pipelnie/](../scripts/Exploratory_spectral_analysis_pipelnie/) is the current reference example (see [Exploratory spectral parameterization pipeline](#exploratory-spectral-parameterization-pipeline) below).
+
+`data/` in this repository is a small local sample dataset (e.g. `data/W_030/`), used
+for tests, demos, and the diagrams below — not the production `UNIWAW_RAW_DATA` /
+`UNIWAW_EEG_exported_BY_TASKS` folders, which live on the SYNCC-IN Google Drive.
+
 ## System Architecture Overview
 
 ```mermaid
@@ -240,6 +273,36 @@ flowchart TD
     style RESULTS fill:#ffcc80
 ```
 
+## Exploratory spectral parameterization pipeline
+
+[scripts/Exploratory_spectral_analysis_pipelnie/](../scripts/Exploratory_spectral_analysis_pipelnie/)
+is the current reference example of an analysis pipeline built on the cleaned-EEG
+output of Stage 3 above (see [Current Production Pipeline](#current-production-pipeline)).
+It derives individualized EEG frequency bands and ROIs per participant (fixed adult
+bands like theta 4-8 Hz / alpha 8-13 Hz do not hold for the 3-6 y.o. cohort), as seven
+numbered scripts, each reading the previous step's output and writing figures/tables
+to `Exploratory_spectral_analysis/<step_name>/`:
+
+| Script | Step |
+|---|---|
+| `01_compute_psd.py` | Multitaper PSD per participant x movie x channel |
+| `02_run_specparam.py` (+ `02_individual_specparam.py` standalone variant) | specparam fitting on movie-averaged PSDs |
+| `03_peak_inventory.py` | Peak prevalence across scalp/frequency, clustering |
+| `04_band_assignment.py` | Slow/fast rhythm band assignment via seeded k-means |
+| `05_roi_definition.py` | ROI viability validation per band |
+| `06_roi_specparam_rerun.py` | ROI-averaged specparam rerun, peak-survival check |
+| `07_movie_stability_check.py` | Per-movie stability of detected peaks |
+
+Each script follows the same structure: imports from `src/` (`io_utils.py`, `psd.py`,
+`specparam_utils.py`, `peaks.py`, `bands.py`, `roi.py`, `viz.py`), a `# Configuration`
+block at the top defining input/output paths and analysis constants (e.g. `FMIN`,
+`FMAX`, `FREQ_RANGE`, `EXCLUDED_DYADS`), then the pipeline logic and figure generation.
+This config-at-top-of-script, functions-in-`src/` pattern is the one new pipelines in
+this repository should follow — see [CLAUDE.md](../CLAUDE.md) for the full convention.
+
+Findings and the rationale behind each stage's parameter choices are recorded in
+[Exploratory_spectral_analysis/spectral_parameterization_report.md](../Exploratory_spectral_analysis/spectral_parameterization_report.md).
+
 ## File Organization
 
 ```
@@ -261,16 +324,30 @@ hyperscanning-signal-analysis/
 │               └── 002/
 │
 ├── src/
-│   ├── dataloader.py              # Main data loading & processing
+│   ├── dataloader.py              # Main data loading & processing (Stage 1)
 │   ├── data_structures.py         # MultimodalData class
 │   ├── eyetracker.py              # ET-specific processing
-│   ├── export.py                  # NCDF export/import; EEG loaders & plots
+│   ├── export.py                  # NCDF export, incl. export_passive_and_talk_data (Stage 2)
+│   ├── ncdf.py                    # NCDF load helpers (load_xarray_from_netcdf, get_export_metadata)
+│   ├── mne_bridge.py              # NCDF <-> MNE bridge, AutoReject quality checks
+│   ├── ica_preprocessing.py       # ICAPreprocessor: fit / ICLabel classify / apply (Stage 3)
+│   ├── io_utils.py                # Loads cleaned EEG NCDF for analysis pipelines (Stage 4)
+│   ├── psd.py, specparam_utils.py, peaks.py, bands.py, roi.py, viz.py
+│   │                               # exploratory spectral pipeline library functions
+│   ├── envelopes.py                # instantaneous-amplitude envelope utilities
+│   ├── secore_loader.py           # SECORE (H10 IBI/RMSSD) loading pipeline
+│   ├── multimodal_io.py           # joblib save/load of MultimodalData objects
 │   ├── utils.py                   # Plotting & utility functions
+│   ├── warsaw_pilot_data.py       # legacy example pipeline (local `data/` sample only)
 │   └── mtmvar.py                  # DTF computation, FAD decomposition, MVAR pipeline
 │
 ├── scripts/
-│   ├── mne_export_demo.ipynb      # MNE export examples
-│   ├── get_data_demo.ipynb        # Data access examples
+│   ├── export_dyade_to_ncdf_by_task_batch.py   # Stage 2, batch, all dyads
+│   ├── export_dyade_to_ncdf_by_task_demo.py    # Stage 2, single dyad walkthrough
+│   ├── EEG_ICA_clean.py                        # Stage 3 driver
+│   ├── Exploratory_spectral_analysis_pipelnie/ # Stage 4 reference pipeline (7 steps)
+│   ├── demo_envelopes.py          # envelope extraction demo (reads EEG_ICA_CLEANED)
+│   ├── plot_one_ncdf_demo.py      # quick-look plot of any exported .nc file
 │   ├── filter_demo.ipynb          # Filter design & testing
 │   ├── decimation_test.ipynb      # Decimation testing
 │   ├── EEG_ET_synch_test.ipynb    # Synchronization checks
@@ -279,7 +356,7 @@ hyperscanning-signal-analysis/
 │   ├── ESCan_drfat.ipynb          # MVAR / ffDTF batch analysis & composite figures
 │   ├── eeg_quality_report_demo.ipynb   # Single-file AutoReject quality report
 │   ├── eeg_quality_report_batch.ipynb  # Batch AutoReject quality report
-│   └── warsaw_pilot_data.py       # Analysis pipeline
+│   └── deprecated_*.ipynb / dev_test_*.ipynb  # superseded or in-progress notebooks
 │
 ├── tests/
 │   ├── test_dataloader.py
@@ -287,6 +364,8 @@ hyperscanning-signal-analysis/
 │
 └── docs/
     ├── data_structure_spec.md
+    ├── export_ncdf_guide.md         # NCDF export/import, incl. the by-task export (Stage 2)
+    ├── secore_loader_guide.md       # SECORE (H10 IBI/RMSSD) loading guide
     ├── fad_specparam_guide.md       # FAD decomposition & specparam guide
     └── architecture_diagram.md     # This file
 ```

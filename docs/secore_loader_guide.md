@@ -38,6 +38,12 @@ data from the SECORE experiment using the `src.secore_loader` module.
 - [Demo notebook](#demo-notebook)
 ---
 
+> **Scope:** this guide covers the SECORE (cardiac/H10) sub-pipeline only, which is
+> independent of the EEG raw-import -> by-task-export -> ICA-cleaning pipeline
+> described in the project [README](../README.md#current-data-pipeline) and
+> [docs/architecture_diagram.md](architecture_diagram.md#current-production-pipeline).
+> SECORE data is loaded straight from raw H10 CSVs via `src.secore_loader`.
+
 ## Overview
 
 The SECORE experiment records cardiac signals from both child (CH) and caregiver (CG)
@@ -488,7 +494,7 @@ works without modification.
 
 ## Demo notebook
 
-See [scripts/secore_raw_import_demo.ipynb](../scripts/secore_raw_import_demo.ipynb) for a
+See [scripts/dev_test_secore_raw_import_demo.ipynb](../scripts/dev_test_secore_raw_import_demo.ipynb) for a
 runnable example that:
 
 1. Configures dyad number and device IDs.
