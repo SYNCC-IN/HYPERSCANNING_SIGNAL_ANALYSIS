@@ -26,6 +26,10 @@ Thumbs.db
 # Includes Exploratory_spectral_analysis/derived_data/, the pipeline's intermediate cache.
 Exploratory_spectral_analysis/
 
+# Interbrain ffDTF + HRV pipeline: regenerable outputs
+# (run scripts/stage00_synthetic_validation.py, stage01_*.py, ... to rebuild)
+Interbrain_ffDTF_analysis/
+
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 

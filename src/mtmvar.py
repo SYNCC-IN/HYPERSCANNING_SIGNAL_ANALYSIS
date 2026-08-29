@@ -469,7 +469,7 @@ def gen_partial_directed_coherence(signals, freqs, fs, max_model_order=20, optim
 
 
 # Plotting function for graph visualization
-def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title, scale='linear'):
+def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title, scale='linear', fig_size=(8, 8)):
     """
     Plot MVAR results using bar plots for diagonal (auto) and off-diagonal (cross) terms.
 
@@ -490,6 +490,8 @@ def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title,
         Main plot title
     scale : str
         'linear', 'sqrt', or 'log'
+    fig_size : tuple of int, optional
+        Figure size (width, height). Default is (8, 8).
     """
     on_diag = np.abs(on_diag)
     off_diag = np.abs(off_diag)
@@ -514,7 +516,7 @@ def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title,
     max_on_diag = np.max(on_diag)
     max_off_diag = np.max(off_diag)
 
-    _, axs = plt.subplots(n_chan, n_chan, figsize=(8, 8),
+    _, axs = plt.subplots(n_chan, n_chan, figsize=fig_size,
                           gridspec_kw={'wspace': 0, 'hspace': 0})
 
     for i in range(n_chan):
