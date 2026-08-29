@@ -47,7 +47,7 @@ from src.envelopes import (
     plot_eeg_hrv_envelopes,
     plot_signal_filtered_envelope,
 )
-from src.ncdf import load_xarray_from_netcdf
+from src.netcdf_io import load_xarray_from_netcdf
 from src.roi import define_rois_theory
 
 

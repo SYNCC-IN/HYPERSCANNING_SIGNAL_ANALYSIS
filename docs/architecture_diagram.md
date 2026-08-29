@@ -328,7 +328,7 @@ hyperscanning-signal-analysis/
 │   ├── data_structures.py         # MultimodalData class
 │   ├── eyetracker.py              # ET-specific processing
 │   ├── export.py                  # NCDF export, incl. export_passive_and_talk_data (Stage 2)
-│   ├── ncdf.py                    # NCDF load helpers (load_xarray_from_netcdf, get_export_metadata)
+│   ├── netcdf_io.py               # NCDF load helpers (load_xarray_from_netcdf, get_export_metadata, task_regions, read_core_attrs)
 │   ├── mne_bridge.py              # NCDF <-> MNE bridge, AutoReject quality checks
 │   ├── ica_preprocessing.py       # ICAPreprocessor: fit / ICLabel classify / apply (Stage 3)
 │   ├── io_utils.py                # Loads cleaned EEG NCDF for analysis pipelines (Stage 4)

@@ -8,7 +8,7 @@ import mne
 import numpy as np
 import xarray as xr
 
-from .ncdf import _sanitize_netcdf_attrs_inplace
+from .netcdf_io import sanitize_netcdf_attrs_inplace
 from . import dataloader
 
 # ── Old-style 10-20 names that MNE's standard_1020 montage does not recognise ──
@@ -284,7 +284,7 @@ def _build_dataarray(
         'task_event_names_json': json.dumps(ordered_events, ensure_ascii=True),
         'task_events_structure': events_structure,
     })
-    _sanitize_netcdf_attrs_inplace(da.attrs)
+    sanitize_netcdf_attrs_inplace(da.attrs)
     return da
 
 
@@ -709,5 +709,5 @@ def export_passive_and_talk_data(
     #     'metadata_json': json.dumps(metadata, ensure_ascii=False, default=str),
     # })
 
-    # _sanitize_netcdf_attrs_inplace(data_xr.attrs)
+    # sanitize_netcdf_attrs_inplace(data_xr.attrs)
     # return data_xr

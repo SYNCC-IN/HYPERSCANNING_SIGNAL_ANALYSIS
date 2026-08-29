@@ -12,7 +12,7 @@ from src import mne_bridge
 from src import multimodal_io
 from src import utils
 from src.data_structures import MultimodalData
-from src.ncdf import _build_task_regions_from_xarray
+from src.netcdf_io import task_regions
 from src.ica_preprocessing import _format_component_probabilities
 
 
@@ -193,23 +193,43 @@ def test_plot_xarray_with_regions_handles_2d_data():
         utils.plot_xarray_with_regions(data, regions=[{"span": (0.0, 2.0), "name": "event"}])
 
 
-def test_build_task_regions_from_xarray_uses_task_events_structure():
-    """Task-event metadata should be converted into plotting regions."""
+def test_task_regions_uses_task_events_structure():
+    """Task-event metadata should be converted into plotting regions, relative by default."""
     da = xr.DataArray(
         np.zeros((3, 2)),
         dims=["time", "channel"],
         coords={"time": [0.0, 1.0, 2.0], "channel": ["Fp1", "Fp2"]},
     )
     da.attrs["task_events_structure"] = [
-        {"name": "Peppa", "start_s": 0.0, "duration_s": 1.0},
-        {"name": "Incredibles", "start_s": 1.5, "duration_s": 0.5},
+        {"name": "Peppa", "start_s": 100.0, "start_rel_s": 0.0, "duration_s": 1.0},
+        {"name": "Incredibles", "start_s": 101.5, "start_rel_s": 1.5, "duration_s": 0.5},
     ]
 
-    regions = _build_task_regions_from_xarray(da)
+    regions = task_regions(da)
 
     assert regions == [
         {"span": (0.0, 1.0), "name": "Peppa"},
         {"span": (1.5, 2.0), "name": "Incredibles"},
+    ]
+
+
+def test_task_regions_absolute_reference():
+    """`reference='absolute'` should read `start_s` instead of `start_rel_s`."""
+    da = xr.DataArray(
+        np.zeros((3, 2)),
+        dims=["time", "channel"],
+        coords={"time": [0.0, 1.0, 2.0], "channel": ["Fp1", "Fp2"]},
+    )
+    da.attrs["task_events_structure"] = [
+        {"name": "Peppa", "start_s": 100.0, "start_rel_s": 0.0, "duration_s": 1.0},
+        {"name": "Incredibles", "start_s": 101.5, "start_rel_s": 1.5, "duration_s": 0.5},
+    ]
+
+    regions = task_regions(da, reference="absolute")
+
+    assert regions == [
+        {"span": (100.0, 101.0), "name": "Peppa"},
+        {"span": (101.5, 102.0), "name": "Incredibles"},
     ]
 
 

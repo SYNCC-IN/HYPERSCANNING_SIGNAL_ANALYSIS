@@ -9,10 +9,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 try:
-    from .ncdf import load_ncdf, task_regions
+    from .netcdf_io import load_ncdf, task_regions
     from .plot_utils import plot_xarray_signals
 except ImportError:  # pragma: no cover - fallback for direct script execution
-    from src.ncdf import load_ncdf, task_regions
+    from src.netcdf_io import load_ncdf, task_regions
     from src.plot_utils import plot_xarray_signals
 
 ncdf_file_path = Path('/Users/admin/Library/CloudStorage/GoogleDrive-j.zygierewicz@uw.edu.pl/.shortcut-targets-by-id/1N4ySQ5GO6UE8fY2jnRkRUjBFm4XHrBRv/SYNCC-IN/WP4          - Joint study/UniWAW Data collection/UNIWAW_EEG_exported_BY_TASKS/EEG/W_019/child/W_019_EEG_ch_passive_movies.nc')  # noqa: E501

@@ -149,8 +149,9 @@ ordered scale — never average across films.
   mirroring the by-task EEG export:
   `UNIWAW_EEG_exported_BY_TASKS/IBI/<dyad_id>/<child|caregiver>/<dyad_id>_IBI_<ch|cg>_passive_movies.nc`
   (grep/confirm the exact root once, then put it in script config).
-- Loader: `src.ncdf.load_ncdf(path)` (generic xarray loader). Because the grid matches EEG,
-  reuse the **movie boundaries from the EEG load** (§4.1 `movies`) — no separate alignment.
+- Loader: `src.io_utils.load_ibi_nc(path)` (thin wrapper over `src.netcdf_io`'s core; was
+  `src.ncdf.load_ncdf(path)`). Because the grid matches EEG, reuse the **movie boundaries from
+  the EEG load** (§4.1 `movies`) — no separate alignment.
 - **Out of scope:** the SECORE / H10 IBI branch (`src.secore_loader`, `src.secore_utils`) is a
   different part of the experiment. Do **not** use it here.
 
@@ -163,8 +164,10 @@ ordered scale — never average across films.
 
 ### 4.4 Movie boundaries & event structure
 - Within the `passive_movies` chunk, per-film boundaries come from `movies` (§4.1) or from the
-  `task_events_structure` attr via `src.ncdf.task_regions(data_xr)` (also drives plotting
-  `regions=`). Films: `Peppa`, `Incredibles`, `Brave`.
+  `task_events_structure` attr via `src.netcdf_io.task_regions(data_xr, reference='relative')`
+  (also drives plotting `regions=`; `reference='relative'` is the default and matches the
+  chunk-relative `time` coordinate -- see the netcdf_io core refactor). Films: `Peppa`,
+  `Incredibles`, `Brave`.
 
 ### 4.5 Intermediate layout (the hand-off interface between stages)
 Root `<ANALYSIS_ROOT>` is a script-level config value.
@@ -192,7 +195,8 @@ indexing is stable across stages.
 Full catalog: `docs/function_reference.md`. The functions this pipeline actually uses:
 
 - **Load / segment:** `io_utils.get_participant_files`, `io_utils.load_eeg_nc`,
-  `io_utils.trim_to_event_window`, `ncdf.load_ncdf`, `ncdf.task_regions`.
+  `io_utils.load_ibi_nc`, `io_utils.trim_to_event_window`, `netcdf_io.load_ncdf`,
+  `netcdf_io.task_regions` (renamed from `ncdf.*`).
 - **ROI:** `roi.define_rois_theory` (P7/P8, Fz, …), `roi.average_psd_within_roi` (PSD-space;
   for envelopes use `envelopes.average_channels`).
 - **Bands:** `bands.assign_bands_all_rois`, `bands.compute_iaf_metrics` (already produce the
@@ -252,7 +256,8 @@ alignment.
 - **Read first:** §4.1, §4.2, §4.4, §5.
 - **Inputs:** cleaned EEG (§4.1); IBI per-task NCDF (§4.2).
 - **Reuse:** `get_participant_files`, `load_eeg_nc` (gives `movies`, `group`, `age_months`),
-  `ncdf.load_ncdf`, `ncdf.task_regions`, `roi.define_rois_theory`.
+  `io_utils.load_ibi_nc`, `netcdf_io.read_core_attrs`, `netcdf_io.task_regions`
+  (renamed from `ncdf.*`), `roi.define_rois_theory`.
 - **Build (`src/assemble.py`):** a thin loader returning a per-dyad×film container
   `{EEG-ROI channels, IBI, movie window, meta}` on the shared grid — pure composition of the
   above, ROI passed as an argument. No new alignment logic.

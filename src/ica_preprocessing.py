@@ -12,11 +12,11 @@ from mne.preprocessing import ICA
 
 try:
     from .mne_bridge import load_eeg_ncdf_as_mne_raw
-    from .ncdf import load_xarray_from_netcdf
+    from .netcdf_io import load_xarray_from_netcdf
     from .plot_utils import plot_xarray_signals
 except ImportError:  # pragma: no cover - fallback for direct script execution
     from src.mne_bridge import load_eeg_ncdf_as_mne_raw
-    from src.ncdf import load_xarray_from_netcdf
+    from src.netcdf_io import load_xarray_from_netcdf
     from src.plot_utils import plot_xarray_signals
 
 

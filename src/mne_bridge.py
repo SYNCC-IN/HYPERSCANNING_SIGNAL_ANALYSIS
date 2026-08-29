@@ -6,10 +6,10 @@ import numpy as np
 import xarray as xr
 
 try:
-    from .ncdf import load_xarray_from_netcdf, get_export_metadata
+    from .netcdf_io import load_xarray_from_netcdf, get_export_metadata
     from .plot_utils import plot_xarray_signals
 except ImportError:  # pragma: no cover - fallback for direct script execution
-    from src.ncdf import load_xarray_from_netcdf, get_export_metadata
+    from src.netcdf_io import load_xarray_from_netcdf, get_export_metadata
     from src.plot_utils import plot_xarray_signals
 
 _EEG_10_20_CHANNELS = frozenset({

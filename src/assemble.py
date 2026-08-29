@@ -1,9 +1,9 @@
 """Per-dyad data assembly for the interbrain ffDTF + HRV pipeline (Stage 1).
 
-Composes the existing NetCDF loaders (`src.ncdf`) into one continuous,
-per-dyad container: EEG (ROI-subset, channels kept separate) plus IBI, both
-on the shared EEG time grid, plus label-keyed film windows and per-child
-metadata. Pure composition -- no filtering, no alignment, no Hilbert
+Composes the existing NetCDF loaders (`src.netcdf_io`, `src.io_utils`) into
+one continuous, per-dyad container: EEG (ROI-subset, channels kept separate)
+plus IBI, both on the shared EEG time grid, plus label-keyed film windows and
+per-child metadata. Pure composition -- no filtering, no alignment, no Hilbert
 envelopes, and no per-film cutting (film windows are handed off as metadata
 so Stage 2 can segment *after* filtering, keeping edge transients out of the
 kept data). See `scripts/stage01_coverage.py` for the orchestration built on
@@ -16,9 +16,11 @@ from pathlib import Path
 import numpy as np
 
 try:
-    from .ncdf import get_export_metadata, load_xarray_from_netcdf, task_regions
+    from .io_utils import load_ibi_nc
+    from .netcdf_io import get_export_metadata, load_xarray_from_netcdf, read_core_attrs, task_regions
 except ImportError:  # pragma: no cover - fallback for direct script execution
-    from src.ncdf import get_export_metadata, load_xarray_from_netcdf, task_regions
+    from src.io_utils import load_ibi_nc
+    from src.netcdf_io import get_export_metadata, load_xarray_from_netcdf, read_core_attrs, task_regions
 
 ROLE_CODE_OF = {'child': 'ch', 'caregiver': 'cg'}
 ROLE_DIR_OF = {'ch': 'child', 'cg': 'caregiver'}
@@ -152,7 +154,8 @@ def assemble_dyad(dyad_id, eeg_files, ibi_root, roi_channels):
         data = data_xr.transpose('channel', 'time').values.astype(float)
         channel_names = list(data_xr.coords['channel'].values)
         time = np.asarray(data_xr.coords['time'].values, dtype=float)
-        sfreq = float(data_xr.attrs['sampling_freq'])
+        core = read_core_attrs(data_xr)
+        sfreq = core['sfreq']
         metadata = get_export_metadata(data_xr)
 
         data_roi, channels_found = select_roi_channels(data, channel_names, roi_channels)
@@ -170,20 +173,21 @@ def assemble_dyad(dyad_id, eeg_files, ibi_root, roi_channels):
             'roi_ok': roi_ok,
         }
 
-        role_film_windows[role] = {r['name']: r['span'] for r in task_regions(data_xr)}
-        child_info = metadata.get('child_info', {})
-        role_child_info[role] = child_info if isinstance(child_info, dict) else {}
+        role_film_windows[role] = {r['name']: r['span'] for r in task_regions(data_xr, reference='relative')}
+        role_child_info[role] = {
+            'age_months': core['age_months'], 'group': core['group'], 'sex': core['sex'],
+        }
 
         ibi_path = ibi_path_for(ibi_root, dyad_id, role_code)
         if ibi_path.exists():
-            ibi_xr = load_xarray_from_netcdf(ibi_path, decode_json_attrs=True)
-            ibi_time = np.asarray(ibi_xr.coords['time'].values, dtype=float)
+            ibi_entry = load_ibi_nc(ibi_path)
+            ibi_time = ibi_entry['time']
             grid_matches_eeg = len(ibi_time) == len(time) and np.array_equal(ibi_time, time)
             if not grid_matches_eeg:
                 notes.append(f"IBI time grid does not match EEG for {dyad_id} {role}")
             ibi[role] = {
-                'data': np.asarray(ibi_xr.values, dtype=float).reshape(-1),
-                'sfreq': float(ibi_xr.attrs['sampling_freq']),
+                'data': ibi_entry['data'],
+                'sfreq': ibi_entry['sfreq'],
                 'time': ibi_time,
                 'grid_matches_eeg': grid_matches_eeg,
             }

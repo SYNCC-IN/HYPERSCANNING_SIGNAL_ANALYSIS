@@ -67,13 +67,17 @@ Exports `MultimodalData` to `xarray`/NetCDF. See [docs/export_ncdf_guide.md](exp
 - `write_dyad_to_uniwaw_imported(dyad_id_list=None, load_eeg=True, load_et=True, load_meta=True, lowcut=1.0, highcut=40.0, eeg_filter_type='fir', decimate_factor=8, plot_flag=False, time_margin=10, input_data_path='../data', export_path='../data/UNIWAW_imported', verbose=False, logger=None)` — older per-event export: one `.nc` file per modality/member/event for a whole dyad.
 - `export_chunk_to_xarray(multimodal_data, selected_events, selected_channels, selected_modality, member, time_margin, chunk_name, EEG_montage=None, EEG_bad_channels=None, verbose=True, mne_plot_flag=False, logger=None)` — lower-level building block used by both functions above: exports one chunk spanning multiple events to a single `xarray.DataArray` (handles bad-channel interpolation + re-referencing via MNE).
 
-### `src/ncdf.py`
-Load exported NetCDF back into `xarray`.
+### `src/netcdf_io.py` (renamed from `src/ncdf.py`)
+Generic NetCDF↔`xarray` core — depends only on `xarray`/`json`/`numbers`, no `pandas`/MNE/modality specifics. Per-modality readers (`src/io_utils.py`) are thin wrappers over this.
 
 - `load_xarray_from_netcdf(filename, decode_json_attrs=True)` — load a `.nc` file into `xarray.DataArray`, optionally JSON-decoding structured attrs.
-- `get_export_metadata(data_xr)` — decode the `metadata_json` attrs payload into a dict.
 - `load_ncdf(path)` — one-line convenience loader for scripts (wraps `load_xarray_from_netcdf`).
-- `task_regions(data_xr)` — build plotting "regions" (name/span/color) from the `task_events_structure` attr, for use with `plot_xarray_signals(regions=...)`.
+- `get_export_metadata(data_xr)` — decode the `metadata_json` attrs payload into a dict.
+- `read_core_attrs(data_xr)` — the modality-agnostic attributes every loader needs: `dyad_id`, `who` (raw role code), `sfreq`, `age_months`/`group`/`sex` (from `get_export_metadata`'s `child_info` block).
+- `parse_task_events(data_xr, reference='relative')` — single source of truth for the `task_events_structure` attr → `[{'name', 'start_s', 'duration_s'}, ...]`; `reference='relative'` (default) reads `start_rel_s` (matches the exported chunk's own `time` coordinate — what `load_eeg_nc`'s `movies` and Stage 1/2 film windows need), `'absolute'` reads `start_s` (the original recording's time base).
+- `task_regions(data_xr, reference='relative')` — thin wrapper over `parse_task_events` returning `[{'span': (start, start+dur), 'name': ...}, ...]` for `plot_xarray_signals(regions=...)`.
+- `sanitize_netcdf_attrs_inplace(attrs)` — promoted to public (was `_sanitize_netcdf_attrs_inplace`; used by `src/export.py`'s write side).
+- `decode_json_attrs_inplace(attrs)` — promoted to public (was `_decode_json_attrs_inplace`).
 
 ### `src/mne_bridge.py`
 Bridges exported EEG NetCDF to MNE and runs AutoReject-based quality checks.
@@ -107,11 +111,13 @@ Three-stage ICA cleaning pipeline over `passive_movies` NCDF chunks.
 ## Stage 4 — Analysis pipeline library (exploratory spectral pipeline)
 
 ### `src/io_utils.py`
-Loads cleaned EEG NetCDF for analysis pipelines.
+Per-modality NetCDF readers (thin wrappers over `src/netcdf_io.py`'s core), file discovery, and small path/array utilities.
 
 - `ensure_dir(path)` — create a directory (+ parents) if missing; returns it as `Path`.
-- `get_participant_files(data_dir)` — scan a directory of `*_passive_movies_cleaned.nc` files, return one row per participant (`filepath`, `dyad_id`, `role_code`, `role`).
-- `load_eeg_nc(filepath)` — load one cleaned EEG `.nc` file into a dict: `data` (chan x time, µV), `channel_names`, `sfreq`, `time`, `dyad_id`, `role_code`, `role`, `movies` (per-movie boundaries), `age_months`, `group`, `sex`.
+- `discover_participant_files(data_dir, glob_pattern, stem_regex, role_from_code)` — generic recursive glob + regex file discovery, the core behind `get_participant_files`.
+- `get_participant_files(data_dir)` — thin EEG wrapper over `discover_participant_files`: scan a directory of `*_passive_movies_cleaned.nc` files, return one row per participant (`filepath`, `dyad_id`, `role_code`, `role`).
+- `load_eeg_nc(filepath)` — load one cleaned EEG `.nc` file into a dict: `data` (chan x time, µV), `channel_names`, `sfreq`, `time`, `dyad_id`, `role_code`, `role`, `movies` (per-movie boundaries, chunk-relative), `age_months`, `group`, `sex`.
+- `load_ibi_nc(filepath)` — load one per-task IBI `.nc` file (already on the EEG time grid) into a dict: `data` (1-D), `sfreq`, `time`, `dyad_id`, `role_code`, `role`. Used by `src/assemble.py`'s `assemble_dyad`.
 - `trim_to_event_window(data, time, duration, start=0.0)` — slice `(data, time)` to `[start, start+duration]`, e.g. one movie within the full recording.
 
 ### `src/psd.py`
@@ -244,7 +250,7 @@ Independent of the EEG stages above — reads raw H10 CSVs directly. See [docs/s
 ## General plotting utilities
 
 ### `src/plot_utils.py`
-- `plot_xarray_signals(data_xr, regions=None, stacked=None, max_channels=30, spacing=8.0, normalize=True, figsize=(16.0, 9.0), event_duration=None, time_margin_s=None, title='', xlabel='Time (s)  (0 = event start)', ylabel=None, line_color='#1f4f8b', linewidth=0.6)` — the standard plot for any exported `xarray.DataArray` (used across the export/quality/ICA/envelope code); optional highlighted event `regions` (see `src.ncdf.task_regions`).
+- `plot_xarray_signals(data_xr, regions=None, stacked=None, max_channels=30, spacing=8.0, normalize=True, figsize=(16.0, 9.0), event_duration=None, time_margin_s=None, title='', xlabel='Time (s)  (0 = event start)', ylabel=None, line_color='#1f4f8b', linewidth=0.6)` — the standard plot for any exported `xarray.DataArray` (used across the export/quality/ICA/envelope code); optional highlighted event `regions` (see `src.netcdf_io.task_regions`).
 - `plot_filter_characteristics(b, a, f, T, Fs, f_lim=None, db_lim=None)` — magnitude response, group delay, impulse response, and step response of a digital filter, in one figure.
 
 ### `src/utils.py`

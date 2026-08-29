@@ -95,7 +95,7 @@ An automatic consistency check (`check_consistency_of_multimodal_data()` in `src
 
 Split across three modules (verified against imports, not just prior docs):
 - `src/export.py` — `export_passive_and_talk_data(...)` (preferred, by-task) and the older `write_dyad_to_uniwaw_imported(...)` / `export_to_xarray(...)` (per-event).
-- `src/ncdf.py` — `load_xarray_from_netcdf(...)`, `get_export_metadata(...)`, `load_ncdf(...)`, `task_regions(...)`.
+- `src/netcdf_io.py` (renamed from `src/ncdf.py`) — the generic NetCDF<->xarray core, no `pandas`/MNE/modality specifics: `load_xarray_from_netcdf(...)`, `load_ncdf(...)`, `get_export_metadata(...)`, `read_core_attrs(...)` (modality-agnostic attrs every loader needs), `parse_task_events(...)`/`task_regions(...)` (single source of truth for embedded task-event metadata, `reference='relative'|'absolute'`), `sanitize_netcdf_attrs_inplace(...)`. Per-modality readers (`src/io_utils.py`'s `load_eeg_nc`/`load_ibi_nc`) are thin wrappers over this core.
 - `src/mne_bridge.py` — `load_eeg_ncdf_as_mne_raw(...)`, `load_eeg_signals(...)`, `run_eeg_autoreject_quality_report(...)`, `check_exported_data_quality(...)` (EEG NCDF <-> MNE bridge and AutoReject-based quality gating, used by the batch export script and by `src/ica_preprocessing.py`).
 
 Naming conventions (member codes `ch`/`cg`, site codes `K`/`W`/`M`/`H`, session/task names) are documented in [docs/export_ncdf_guide.md](docs/export_ncdf_guide.md) — follow them exactly when adding new export paths, since `src/mne_bridge.py`, `src/ica_preprocessing.py`, `src/io_utils.py`, and `matlab_utils/ncdf_test_read_demo.m` all parse these names/paths rather than reading structured metadata alone.
@@ -121,4 +121,4 @@ Naming conventions (member codes `ch`/`cg`, site codes `K`/`W`/`M`/`H`, session/
 - Follow the DataFrame column-naming and NCDF export/path-naming conventions above exactly; multiple modules parse filenames/column names rather than structured metadata alone.
 - When changing `MultimodalData`'s schema, update [docs/data_structure_spec.md](docs/data_structure_spec.md)'s version history section — this doc is actively kept in sync with the implementation.
 - Treat `_`-prefixed `MultimodalData` methods as internal to `create_multimodal_data()`; add new data-population logic there rather than calling/extending them from analysis scripts.
-- Before trusting any doc's description of where a function lives, grep for it — several functions have moved between `src/export.py`, `src/ncdf.py`, and `src/mne_bridge.py` over time, and doc updates have lagged (see the corrections in [docs/export_ncdf_guide.md](docs/export_ncdf_guide.md)).
+- Before trusting any doc's description of where a function lives, grep for it — several functions have moved between `src/export.py`, `src/netcdf_io.py` (renamed from `src/ncdf.py`), and `src/mne_bridge.py` over time, and doc updates have lagged (see the corrections in [docs/export_ncdf_guide.md](docs/export_ncdf_guide.md)).

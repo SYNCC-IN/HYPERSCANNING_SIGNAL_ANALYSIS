@@ -1,11 +1,20 @@
-"""Data loading, path management, and results I/O for the exploratory spectral pipeline.
+"""Per-modality NetCDF readers, file discovery, and small path/array utilities.
 
-Reads ICA-cleaned EEG NetCDF files produced by ``scripts/EEG_ICA_clean.py`` /
-``src/ica_preprocessing.py``. Each file covers one participant's whole
-``passive_movies`` task (all movies back to back, CAR referenced, mastoids
-already dropped), named ``<dyad_id>_EEG_<ch|cg>_passive_movies_cleaned.nc``
-under ``<data_dir>/<dyad_id>/``. Individual movie boundaries within the
-recording are given by the ``task_events_structure`` attribute.
+Thin wrappers over the generic core in `src.netcdf_io`: EEG and IBI files
+share the by-task export's file-naming/path conventions and modality-agnostic
+attributes (`src.netcdf_io.read_core_attrs`, `parse_task_events`), so
+`get_participant_files`/`load_eeg_nc`/`load_ibi_nc` only add what is specific
+to their own modality (channel data, or the raw 1-D signal).
+
+`load_eeg_nc` reads ICA-cleaned EEG NetCDF files produced by
+``scripts/EEG_ICA_clean.py`` / ``src/ica_preprocessing.py``. Each file covers
+one participant's whole ``passive_movies`` task (all movies back to back, CAR
+referenced, mastoids already dropped), named
+``<dyad_id>_EEG_<ch|cg>_passive_movies_cleaned.nc`` under
+``<data_dir>/<dyad_id>/``. `load_ibi_nc` reads the matching per-task IBI
+export, already interpolated onto the EEG time grid. Individual movie
+boundaries within either recording are given by the shared
+``task_events_structure`` attribute (`src.netcdf_io.parse_task_events`).
 """
 
 import re
@@ -15,11 +24,14 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .ncdf import load_xarray_from_netcdf, get_export_metadata
+    from .netcdf_io import load_xarray_from_netcdf, parse_task_events, read_core_attrs
 except ImportError:  # pragma: no cover - fallback for direct script execution
-    from src.ncdf import load_xarray_from_netcdf, get_export_metadata
+    from src.netcdf_io import load_xarray_from_netcdf, parse_task_events, read_core_attrs
 
 ROLE_FROM_CODE = {'ch': 'child', 'cg': 'caregiver'}
+
+_EEG_GLOB = '*_passive_movies_cleaned.nc'
+_EEG_STEM_REGEX = re.compile(r'^(?P<dyad_id>[A-Za-z]+_\d+)_EEG_(?P<role_code>ch|cg)_passive_movies_cleaned$')
 
 
 def ensure_dir(path):
@@ -40,6 +52,51 @@ def ensure_dir(path):
     return path
 
 
+def discover_participant_files(data_dir, glob_pattern, stem_regex, role_from_code):
+    """Scan a directory tree for per-participant files and organize them by participant.
+
+    Generic core behind `get_participant_files`: recursively glob candidate
+    files, then match each file's stem against a regex with named groups
+    ``dyad_id`` and ``role_code``.
+
+    Parameters
+    ----------
+    data_dir : str or pathlib.Path
+        Root directory to scan recursively.
+    glob_pattern : str
+        Recursive glob pattern selecting candidate files (e.g.
+        ``'*_passive_movies_cleaned.nc'``).
+    stem_regex : str or re.Pattern
+        Regex matched against each candidate file's stem (``Path.stem``); must
+        define named groups ``dyad_id`` and ``role_code``. A stem that does not
+        match is silently skipped, not an error.
+    role_from_code : dict
+        Maps a matched ``role_code`` to a role name (e.g.
+        ``{'ch': 'child', 'cg': 'caregiver'}``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per matched file, with columns: ``filepath``, ``dyad_id``,
+        ``role_code``, ``role``.
+    """
+    data_dir = Path(data_dir)
+    pattern = re.compile(stem_regex) if isinstance(stem_regex, str) else stem_regex
+
+    rows = []
+    for filepath in sorted(data_dir.rglob(glob_pattern)):
+        m = pattern.match(filepath.stem)
+        if m is None:
+            continue
+        rows.append({
+            'filepath': filepath,
+            'dyad_id': m.group('dyad_id'),
+            'role_code': m.group('role_code'),
+            'role': role_from_code[m.group('role_code')],
+        })
+    return pd.DataFrame(rows)
+
+
 def get_participant_files(data_dir):
     """Scan a directory of cleaned EEG NetCDF files and organize them by participant.
 
@@ -57,21 +114,7 @@ def get_participant_files(data_dir):
         One row per participant, with columns: ``filepath``, ``dyad_id``,
         ``role_code`` (``ch``/``cg``), ``role`` (``child``/``caregiver``).
     """
-    data_dir = Path(data_dir)
-    pattern = re.compile(r'^(?P<dyad_id>[A-Za-z]+_\d+)_EEG_(?P<role_code>ch|cg)_passive_movies_cleaned$')
-
-    rows = []
-    for filepath in sorted(data_dir.rglob('*_passive_movies_cleaned.nc')):
-        m = pattern.match(filepath.stem)
-        if m is None:
-            continue
-        rows.append({
-            'filepath': filepath,
-            'dyad_id': m.group('dyad_id'),
-            'role_code': m.group('role_code'),
-            'role': ROLE_FROM_CODE[m.group('role_code')],
-        })
-    return pd.DataFrame(rows)
+    return discover_participant_files(data_dir, _EEG_GLOB, _EEG_STEM_REGEX, ROLE_FROM_CODE)
 
 
 def load_eeg_nc(filepath):
@@ -96,35 +139,62 @@ def load_eeg_nc(filepath):
         - ``role_code`` : str -- ``ch`` or ``cg``
         - ``role`` : str -- ``child`` or ``caregiver``
         - ``movies`` : list of dict -- ``{'name', 'start_s', 'duration_s'}`` per movie,
-          giving each movie's boundaries within ``time``
+          chunk-relative (matches ``time``), giving each movie's boundaries within it
         - ``age_months`` : float or None -- child age in months
         - ``group`` : str or None -- diagnostic group (e.g. ``TD``, ``ASD``)
         - ``sex`` : str or None
     """
     data_xr = load_xarray_from_netcdf(str(filepath))
-    metadata = get_export_metadata(data_xr)
-    child_info = metadata.get('child_info', {})
-    if not isinstance(child_info, dict):
-        child_info = {}
+    core = read_core_attrs(data_xr)
+    movies = parse_task_events(data_xr, reference="relative")
+    role_code = str(core["who"])
 
-    movies = [
-        {'name': ev['name'], 'start_s': ev['start_rel_s'], 'duration_s': ev['duration_s']}
-        for ev in data_xr.attrs.get('task_events_structure', [])
-    ]
-
-    role_code = str(data_xr.attrs['who'])
     return {
         'data': data_xr.transpose('channel', 'time').values.astype(float),
         'channel_names': list(data_xr.coords['channel'].values),
-        'sfreq': float(data_xr.attrs['sampling_freq']),
+        'sfreq': core["sfreq"],
         'time': np.asarray(data_xr.coords['time'].values, dtype=float),
-        'dyad_id': str(data_xr.attrs['dyad_id']),
+        'dyad_id': str(core["dyad_id"]),
         'role_code': role_code,
         'role': ROLE_FROM_CODE.get(role_code, role_code),
         'movies': movies,
-        'age_months': child_info.get('age_months'),
-        'group': child_info.get('group'),
-        'sex': child_info.get('sex'),
+        'age_months': core["age_months"],
+        'group': core["group"],
+        'sex': core["sex"],
+    }
+
+
+def load_ibi_nc(filepath):
+    """Load a per-task IBI NetCDF file, already interpolated onto the EEG time grid.
+
+    Parameters
+    ----------
+    filepath : str or pathlib.Path
+        Path to a ``<dyad_id>_IBI_<ch|cg>_passive_movies.nc`` file.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+
+        - ``data`` : ndarray, shape (n_times,) -- interbeat-interval signal
+        - ``sfreq`` : float -- sampling frequency in Hz
+        - ``time`` : ndarray, shape (n_times,) -- time axis in seconds
+        - ``dyad_id`` : str
+        - ``role_code`` : str -- ``ch`` or ``cg``
+        - ``role`` : str -- ``child`` or ``caregiver``
+    """
+    data_xr = load_xarray_from_netcdf(str(filepath))
+    core = read_core_attrs(data_xr)
+    role_code = str(core["who"])
+
+    return {
+        'data': np.asarray(data_xr.values, dtype=float).reshape(-1),
+        'sfreq': core["sfreq"],
+        'time': np.asarray(data_xr.coords['time'].values, dtype=float),
+        'dyad_id': str(core["dyad_id"]),
+        'role_code': role_code,
+        'role': ROLE_FROM_CODE.get(role_code, role_code),
     }
 
 

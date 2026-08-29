@@ -49,7 +49,7 @@ The export/import workflow is split across three modules:
     folder tree with one `.nc` file per modality/member/**event**.
   - `export_to_xarray(...)` — older export path; exports one selected modality/member/event
     to a single `xarray.DataArray`.
-- [src/ncdf.py](../src/ncdf.py):
+- [src/netcdf_io.py](../src/netcdf_io.py):
   - `load_xarray_from_netcdf(...)` loads a saved `.nc` file back into `xarray.DataArray`.
   - `get_export_metadata(...)` reads the structured metadata payload from `metadata_json`.
 - [src/mne_bridge.py](../src/mne_bridge.py): converts exported EEG NetCDF to MNE and runs
@@ -245,7 +245,7 @@ Use `get_export_metadata(...)` to decode and access this payload safely.
 #### Example: reading `event_order`
 
 ```python
-from src.ncdf import load_xarray_from_netcdf, get_export_metadata
+from src.netcdf_io import load_xarray_from_netcdf, get_export_metadata
 
 da = load_xarray_from_netcdf("data/UNIWAW_imported/EEG/W_030/child/W_030_EEG_ch_Peppa.nc")
 meta = get_export_metadata(da)
@@ -265,7 +265,7 @@ Exported DataArrays include:
 Use helper API to access structured metadata safely:
 
 ```python
-from src.ncdf import get_export_metadata
+from src.netcdf_io import get_export_metadata
 
 metadata = get_export_metadata(data_xr)
 print(metadata.keys())
@@ -337,7 +337,7 @@ data_xr = export_to_xarray(
 
 ```python
 from pathlib import Path
-from src.ncdf import load_xarray_from_netcdf
+from src.netcdf_io import load_xarray_from_netcdf
 
 dyad_id = "W_030"
 selected_modality = "EEG"
@@ -359,7 +359,7 @@ print(data_xr)
 ### Minimal round-trip example
 
 ```python
-from src.ncdf import load_xarray_from_netcdf, get_export_metadata
+from src.netcdf_io import load_xarray_from_netcdf, get_export_metadata
 
 path = "data/UNIWAW_imported/EEG/W_030/child/W_030_EEG_ch_Peppa.nc"
 da = load_xarray_from_netcdf(path)
