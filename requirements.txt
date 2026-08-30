@@ -6,6 +6,9 @@ pandas==3.0.0
 # Machine learning
 scikit-learn==1.8.0
 
+# Statistics (Ljung-Box residual whiteness test, src/mvar_diag.py)
+statsmodels==0.15.0
+
 # Signal processing and neurophysiology
 neurokit2==0.2.12
 mne==1.11.0

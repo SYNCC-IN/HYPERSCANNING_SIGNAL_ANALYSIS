@@ -103,12 +103,25 @@ ordered scale — never average across films.
 
 ## 3. Cross-cutting decisions (locked in for all stages)
 
-- **Estimator:** `full_freq_dtf` (ffDTF) is v1. Design Stage 4's interface so sDTF
-  (windowed-ACF averaging, Kamiński) and Bayesian MVAR drop in without changing callers.
+- **Estimator: windowed-ACF-averaged sDTF (Kamiński core) is the default, not a deferred
+  swap-in.** Each per-film design matrix is cut into short windows (`src.design.window_stack`),
+  detrended per window (`detrend_windows`), and stacked on a trials axis; `src.mtmvar.ar_coeff`'s
+  existing `count_corr`-based averaging over that axis produces **one** MVAR estimate per film
+  from the averaged autocovariance. `full_freq_dtf`/`multivariate_spectra` then run on that
+  identical 3-D stack with an **explicit** model order (`optimal_model_order=p_used`; **never
+  `None`** on 3-D input — `mvar_criterion` crashes on it, see Stage 3). Rationale: the HRV
+  variables are non-stationary within a 60 s film (drifting RSA centre frequency and variance),
+  biasing a single global 2-D fit; short windows are closer to locally stationary, and the
+  averaged fit empirically pulls AR roots inside the unit circle and fixes residual whiteness
+  for the HRV variables specifically (confirmed on real data at Stage 3, see below) — a
+  Bayesian-regularised MVAR remains a future swap-in behind the same 3-D-stack interface if
+  needed on top of this.
 - **Z-scoring:** the design matrix entering MVAR is **z-scored per channel in time** — the
-  same convention `src.mne_bridge.load_eeg_signals` already applies to raw EEG. Apply it to
-  the envelopes at design-matrix assembly (Stage 3), not at envelope extraction (Stage 2), so
-  the persisted envelope keeps physical amplitude for QC.
+  same convention `src.mne_bridge.load_eeg_signals` already applies to raw EEG. Apply it once,
+  **globally per film** at design-matrix assembly (`src.design.assemble_design_matrix`,
+  Stage 3), before windowing — never per-window (that would remove the cross-window variance
+  drift the averaged-ACF fit is meant to absorb). The persisted Stage 2 envelope stays in
+  physical units for QC.
 - **Envelope-then-segment ordering (critical):** on the **continuous** `passive_movies`
   chunk, run filter + Hilbert + downsample for the EEG-band envelope, and downsample-only for
   the raw IBI, *then* cut per-film fragments from the event structure. Each signal file has a
@@ -314,33 +327,67 @@ alignment.
   window, note it; a high-pass/detrend would be a Stage 3 design-matrix decision, not a silent
   Stage 2 step.
 
-### Stage 3 — Design matrix, model order, stability (some genuinely new diagnostics)
-- **Read first:** §3 (z-scoring), §4.5, §5.
+### Stage 3 — Design matrix, model order, and windowed-ACF-averaged MVAR fit
+- **Read first:** §3 (estimator + z-scoring), §4.5, §5.
 - **Inputs:** `02_envelopes/<dyad>_<film>.nc`.
-- **Reuse:** `mvar_criterion` (AIC/HQ/SC), `ar_coeff`, `mvar_transfer_function`.
-- **Build (`src/design.py`, matrix part + `src/mvar_diag.py`):**
-  `assemble_design_matrix(envelopes, zscore=True)` → `(4, n_samp)` in the fixed variable order,
-  z-scored per channel in time (single source of truth reused by Stage 4);
-  residual-whiteness (ACF of residuals) and **AR-root stability** (unit-circle) diagnostics —
-  these are **not** in the current library and are the real new code here.
-- **Script (`scripts/stage03_mvar_order.py`):** select `p` separately for EEG vs HRV, decide
-  shared vs separate `p`, run diagnostics, flag unstable dyads.
-- **Output:** `03_mvar/<dyad>_<film>_order.json`.
-- **Gate:** AIC/BIC curves EEG vs HRV (is `p` really different — HRV is now a first-order raw
-  IBI oscillation, not a smoothed envelope, so this is no longer a foregone conclusion);
-  residual
-  whiteness; AR roots inside the unit circle; per-dyad quality flags.
-- **Pass:** residuals white, model stable, a deliberate `p` decision recorded.
-- **Hands off:** the order + a clean list of dyad×film cases fit to estimate.
+- **Reuse:** `mvar_criterion` (AIC/HQ/SC, 2-D only), `ar_coeff` (averages over a trials axis for
+  free via `count_corr` when given 3-D input), `mvar_transfer_function`.
+- **Build:**
+  - `src/design.py`: `assemble_design_matrix(envelopes, zscore=True)` → `(4, n_samp)` in the
+    fixed variable order, z-scored per channel in time (single source of truth reused by
+    Stage 4); `window_stack(design, win_len, step)` → `(4, win_len, n_windows)`, discarding a
+    trailing partial window; `detrend_windows(stack, dtype='linear')` → per-window mean+slope
+    removal (not variance), applied after windowing and after the global z-score, never to the
+    whole film.
+  - `src/mvar_diag.py`: `fit_mvar_avg_acf(design_3d, p)` (thin wrapper over `ar_coeff` on the
+    detrended 3-D stack — the averaging is the library's, this just documents the Kamiński
+    averaged-ACF semantics); `residual_whiteness(design_3d, ar_coeffs, max_lag)` (per-window
+    residuals, no cross-window prediction, ACF averaged across windows, Bartlett-band
+    whiteness summary); `ar_root_stability(ar_coeffs)` (companion-matrix eigenvalues, max
+    modulus, stability flag). Both diagnostics work identically on the windowed 3-D stack or a
+    global design reshaped to one window, so the same functions serve the global-vs-windowed
+    gate comparison — genuinely new code, not in the library before.
+- **Script (`scripts/stage03_mvar_order.py`):** select `p_used` on the **global 2-D** design
+  (`mvar_criterion` cannot take 3-D — documented caveat, not patched); report `p_eeg`/`p_hrv`
+  sub-block orders diagnostically only (`p_used` is always the shared joint-system order, since
+  the exploratory cross brain-heart edges only exist in the joint model); window/detrend/fit;
+  run both diagnostics on the windowed fit *and* a global single-window comparison fit; write
+  the order JSON + manifest; run a small window-choice sensitivity check (1-2 dyads, `10 s/50%`
+  vs `15 s/50%` vs `10 s/0%`, `p_used` held fixed) comparing the primary ffDTF edges.
+- **Locked window geometry:** `WIN_LEN_S = 10`, `OVERLAP_FRAC = 0.5` → 25 samples/window, 11
+  windows per 60 s film at 2.5 Hz. `1/WIN_LEN_S = 0.1 Hz` stays below the ~0.2-1 Hz coupling
+  band (so linear detrend removes only sub-band drift); confirmed, not just asserted, by the
+  sensitivity check.
+- **Output:** `03_mvar/<dyad>_<film>_order.json`, `03_mvar/stage03_manifest.csv`,
+  `03_mvar/sensitivity_band_averages.csv`.
+- **Gate:** AIC/HQ/SC curves (full system + EEG/HRV sub-blocks, global 2-D signal); AR roots on
+  the unit circle, **global vs windowed fit overlaid**; residual ACF, **global vs windowed**,
+  per variable; example windows pre-/post-detrend; window-choice sensitivity spectra + a
+  band-averaged table for the primary edges.
+- **Pass:** windowed residuals white at `p_used`, AR roots inside the unit circle, a deliberate
+  `p` decision recorded, the HRV-variable improvement over the global fit visible, and the
+  primary edges stable across the window-sensitivity configs.
+- **Empirical result (2026, real data, all 126 dyad×film cases):** the windowed-ACF-averaged fit
+  reached `quality_ok` (stable + white) on **126/126** cases, vs the global single-window fit's
+  **0/126** (residual whiteness failed for every case globally — confirmed not a bug via an
+  independent `statsmodels.VAR` cross-check and by refitting near the order cap). This is the
+  empirical case for making the windowed method the default rather than a later swap-in.
+- **Hands off:** the order + the detrended, windowed 3-D stack + a clean list of dyad×film
+  cases fit to estimate.
 
-### Stage 4 — ffDTF estimation (estimator already in repo)
-- **Read first:** §3 (estimator + swap-in interface), Stage 0 result, §5.
-- **Inputs:** `02_envelopes` (via `assemble_design_matrix`) + `03_mvar` order.
+### Stage 4 — ffDTF estimation (estimator already in repo; input is now the windowed 3-D stack)
+- **Read first:** §3 (estimator + windowed-ACF-averaged default), Stage 0 result, Stage 3, §5.
+- **Inputs:** `02_envelopes` (via `assemble_design_matrix` → `window_stack` → `detrend_windows`,
+  identical to Stage 3) + `03_mvar` order (`p_used`).
 - **Reuse:** `full_freq_dtf`, `multivariate_spectra`, `mvar_plot`, `graph_plot`.
-- **Build (`src/connectivity.py`):** a thin wrapper `estimate_ffdtf(design, freqs, fs, p)` with
-  a stable signature so **sDTF** (windowed-ACF averaging) and **Bayesian MVAR** can replace the
-  internals later without changing callers. No new DTF maths in v1.
-- **Script (`scripts/stage04_ffdtf.py`):** per dyad×film → ffDTF cube + spectra.
+- **Build (`src/connectivity.py`):** a thin wrapper `estimate_ffdtf(design_3d, freqs, fs, p_used)`
+  calling `full_freq_dtf`/`multivariate_spectra` with **`optimal_model_order=p_used` always
+  explicit — never `None`** (`mvar_criterion`, which the `None` path calls, crashes on 3-D
+  input). No new DTF maths; the only change from a v1 2-D design is the 3-D windowed stack and
+  the always-explicit order. A **Bayesian MVAR** can still replace the internals later behind
+  this same signature.
+- **Script (`scripts/stage04_ffdtf.py`):** per dyad×film → ffDTF cube + spectra, on the
+  detrended windowed stack.
 - **Output:** `04_ffdtf/<dyad>_<film>.npz`.
 - **Gate (repo-fn):** `mvar_plot` grid for the 12 edges per dyad×film, shown **next to** the
   Stage 0 synthetic result so the numbers are anchored to a known-truth case.
@@ -391,11 +438,17 @@ alignment.
    reversing the original project note's HF-band-envelope choice** (see §1 and Stage 2). An
    HF-envelope comparison variant remains available via `envelopes.hrv_hf_envelope` if wanted
    later, but is not the default pipeline.
-4. **Model order `p`**: shared across EEG/HRV vs separate. Default: check separately in Stage 3,
-   decide from the criterion curves. Note the HRV variable is now a first-order raw oscillation
-   rather than a smoothed envelope, which may itself shift its `p` relative to the EEG side.
-5. **sDTF swap-in window scheme** (later): window length / ACF-averaging count for the
-   Kamiński sDTF variant — deferred until the ffDTF path is validated end to end.
+4. **Model order `p`**: shared across EEG/HRV vs separate — **resolved: shared, fit on the joint
+   4-variable system** (required for the exploratory cross brain-heart edges). `p_eeg`/`p_hrv`
+   sub-block orders are still reported per case, diagnostically only, to expose a mismatch.
+5. **sDTF swap-in window scheme** — **resolved, and no longer a "later" swap-in: windowed-ACF-
+   averaged sDTF (Kamiński core) is now the Stage 3/4 default estimation path**, not deferred.
+   Window geometry locked at `WIN_LEN_S = 10`, `OVERLAP_FRAC = 0.5` (25 samples/window, ~11
+   windows per 60 s film at 2.5 Hz), confirmed (not just asserted) by a window-choice
+   sensitivity check comparing `10 s/50%` against `15 s/50%` and `10 s/0%` on the primary ffDTF
+   edges. Order selection (`p_used`) still runs on the global 2-D signal, since `mvar_criterion`
+   does not support 3-D input and is not being patched (see Stage 3). A Bayesian-regularised
+   MVAR remains a possible future addition on top of this, behind the same 3-D-stack interface.
 
 ---
 
