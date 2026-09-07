@@ -75,13 +75,13 @@ OUTPUT_DIR = ensure_dir(PROJECT_ROOT / "out")
 
 # Estimator settings, locked to the real pipeline (Stage 4/5).
 FS = 2.5
-P = 4
+P = 2
 WIN_LEN_S = 10.0
 OVERLAP_FRAC = 0.5
 DETREND_TYPE = "linear"
 FREQS = np.linspace(0.02, FS / 2 - 0.02, 100)
 COUPLING_BAND_HZ = (0.2, 1.0)
-BOX_COX_LAMBDA = 0.25  # no transform, preserving prior behaviour; spectra are never transformed
+BOX_COX_LAMBDA = -1  #
 ESTIMATOR = "dDTF"  # the pipeline's default estimator
 
 WIN_LEN = round(WIN_LEN_S * FS)
@@ -97,13 +97,13 @@ CHANNEL_LABELS = ("rough (broadband)", "smooth (narrowband)")  # index 0, 1
 # The smoothness gradient (Figure 1): sweep the smooth channel's pole radius.
 R_SMOOTH_GRID = np.array([0.50, 0.60, 0.70, 0.78, 0.85, 0.90, 0.93, 0.95, 0.97])
 N_DYADS = 16             # simulated dyads per grid point per batch (a film's worth)
-N_BATCHES = 6            # independent simulations per grid point; Fig 1 shows their mean +/- SD
+N_BATCHES = 6            # independent simulations per grid point; Fig 1 shows their median +/- SD
 BASE_SEED = 20250904
 
 # Figure 2 (null-vs-real twin): one high-contrast setting, two ground truths.
 R_SMOOTH_FIG2 = 0.95
 N_DYADS_FIG2 = 30        # more dyads for a well-populated null histogram
-INJECTED_GAIN = 0.35     # genuine rough -> smooth coupling for the "signal present" panel
+INJECTED_GAIN = 0.05     # genuine rough -> smooth coupling for the "signal present" panel
 
 # SYNCC-IN brand palette.
 TEAL = "#2B94A6"
@@ -245,21 +245,24 @@ def example_dyads_figure(dyads, r_smooth, max_on_diag=None, max_off_diag=None):
     """
     dyad = dyads[0]
     dDTF, spectra = Granger_estimator(dyad, FREQS, FS, P, WIN_LEN, STEP, DETREND_TYPE, ESTIMATOR, box_cox_lambda=-1)
-    max_on_diag = max_on_diag if max_on_diag is not None else  np.max(dDTF)
-    max_off_diag = max_off_diag if max_off_diag is not None else  np.max(dDTF)
+    max_on_diag = max_on_diag if max_on_diag is not None else  np.max(spectra)
+    max_off_diag = max_off_diag if max_off_diag is not None else  np.max(dDTF[~np.eye(dDTF.shape[0], dtype=bool)])
+    print(f"example_dyads_figure: r_smooth={r_smooth:.2f}, max_on_diag={max_on_diag:.5f}, max_off_diag={max_off_diag:.5f}")
+    #max_on_diag = np.abs(max_on_diag)
+    #max_off_diag = np.abs(max_off_diag)
     fig = plt.figure(figsize=(11.5, 5.0))
     subfig_signals, subfig_mvar = fig.subfigures(1, 2, width_ratios=[1.0, 1.2])
 
     ax_top, ax_bot = subfig_signals.subplots(2, 1, sharex=True)
     ax_top.plot(dyad[0], color=GREY, linewidth=0.8)
-    ax_top.set_ylabel(f"{CHANNEL_LABELS[0]}\nz-scored amplitude")
+    ax_top.set_ylabel(f"{CHANNEL_LABELS[0]}")
     ax_bot.plot(dyad[1], color=TEAL, linewidth=0.8)
-    ax_bot.set_ylabel(f"{CHANNEL_LABELS[1]}\nz-scored amplitude")
+    ax_bot.set_ylabel(f"{CHANNEL_LABELS[1]}")
     ax_bot.set_xlabel("time (samples)")
-    subfig_signals.suptitle(f"Example dyad at r_smooth={r_smooth:.2f} (contrast={r_smooth - R_ROUGH:+.2f})")
+    subfig_signals.suptitle(f"Simulated dyad at smoothness contrast={r_smooth - R_ROUGH:+.2f})")
 
     mvar_plot(spectra, dDTF, FREQS, "from ", "to ", ["ch0", "ch1"],
-              "spectra (diag) / dDTF (off-diag)", fig=subfig_mvar, band_hz=COUPLING_BAND_HZ, max_on_diag=max_on_diag, max_off_diag=max_off_diag)
+              "spectra (diag) / dDTF (off-diag)", fig=subfig_mvar, band_hz=None, max_on_diag=max_on_diag, max_off_diag=max_off_diag)
 
     fig_path = OUTPUT_DIR / f"example_dyads_r_smooth_{r_smooth:.2f}.png"
     fig.savefig(fig_path, dpi=150)
@@ -273,12 +276,14 @@ def example_dyads_figure(dyads, r_smooth, max_on_diag=None, max_off_diag=None):
 print(f"Figure 1: sweeping the smoothness gradient (zero real coupling throughout), "
       f"{N_BATCHES} batches x {N_DYADS} dyads")
 contrast = R_SMOOTH_GRID - R_ROUGH
-real_mean, null_mean, delta_mean, delta_sd, delta_z_mean = [], [], [], [], []
+real_median, null_median, delta_median, delta_sd, delta_z_median = [], [], [], [], []
 first_example_dyads = simulate_dyads(R_SMOOTH_GRID[0], 0.0, N_DYADS, BASE_SEED + 0 * 10000)
 last_example_dyads = simulate_dyads(R_SMOOTH_GRID[-1], 0.0, N_DYADS, BASE_SEED + (N_BATCHES - 1) * 10000)
 max_on_diag, max_off_diag = example_dyads_figure(last_example_dyads, R_SMOOTH_GRID[-1], max_on_diag=None, max_off_diag=None) # final example after the loop
 print(f"max_on_diag={max_on_diag:.5f}, max_off_diag={max_off_diag:.5f}")
 _ = example_dyads_figure(first_example_dyads, R_SMOOTH_GRID[0], max_on_diag=max_on_diag, max_off_diag=max_off_diag  ) # final example after the loop
+
+
 # %%
 for r_smooth in R_SMOOTH_GRID:
     batch_real, batch_null, batch_delta, batch_z = [], [], [], []
@@ -287,39 +292,39 @@ for r_smooth in R_SMOOTH_GRID:
         reals = real_edge_values(dyads, EDGE_SMOOTH_TO_ROUGH)
         nulls = surrogate_null(dyads, EDGE_SMOOTH_TO_ROUGH)
         per_dyad = [delta_and_z(r, nulls) for r in reals]
-        batch_real.append(reals.mean())
-        batch_null.append(nulls.mean())
-        batch_delta.append(np.mean([d["delta"] for d in per_dyad]))
-        batch_z.append(np.mean([d["z"] for d in per_dyad]))
-    real_mean.append(np.mean(batch_real))
-    null_mean.append(np.mean(batch_null))
-    delta_mean.append(np.mean(batch_delta))
+        batch_real.append(np.median(reals))
+        batch_null.append(np.median(nulls))
+        batch_delta.append(np.median([d["delta"] for d in per_dyad]))
+        batch_z.append(np.median([d["z"] for d in per_dyad]))
+    real_median.append(np.median(batch_real))
+    null_median.append(np.median(batch_null))
+    delta_median.append(np.median(batch_delta))
     delta_sd.append(np.std(batch_delta, ddof=1))
-    delta_z_mean.append(np.mean(batch_z))
+    delta_z_median.append(np.median(batch_z))
     print(f"  r_smooth={r_smooth:.2f} (contrast={r_smooth - R_ROUGH:+.2f}): "
-          f"real={real_mean[-1]:.5f} null={null_mean[-1]:.5f} "
-          f"Delta={delta_mean[-1]:+.5f} z={delta_z_mean[-1]:+.2f}")
+          f"real={real_median[-1]:.5f} null={null_median[-1]:.5f} "
+          f"Delta={delta_median[-1]:+.5f} z={delta_z_median[-1]:+.2f}")
 
 
-real_mean = np.array(real_mean); null_mean = np.array(null_mean)
-delta_mean = np.array(delta_mean); delta_sd = np.array(delta_sd); delta_z_mean = np.array(delta_z_mean)
+real_median = np.array(real_median); null_median = np.array(null_median)
+delta_median = np.array(delta_median); delta_sd = np.array(delta_sd); delta_z_median = np.array(delta_z_median)
 
 fig1, ax1 = plt.subplots(figsize=(8.2, 5.0))
 ax1.axhline(0, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
-ax1.plot(contrast, real_mean, "-o", color=NAVY, linewidth=2.2, markersize=6,
+ax1.plot(contrast, real_median, "-o", color=NAVY, linewidth=2.2, markersize=6,
          label="raw dDTF, real dyads (smooth $\\rightarrow$ rough)")
-ax1.plot(contrast, null_mean, "-s", color=AMBER, linewidth=2.2, markersize=6,
-         label="surrogate null mean (same edge)")
-ax1.fill_between(contrast, delta_mean - delta_sd, delta_mean + delta_sd,
+ax1.plot(contrast, null_median, "-s", color=AMBER, linewidth=2.2, markersize=6,
+         label="surrogate null median (same edge)")
+ax1.fill_between(contrast, delta_median - delta_sd, delta_median + delta_sd,
                  color=TEAL, alpha=0.2, linewidth=0)
-ax1.plot(contrast, delta_mean, "-D", color=TEAL, linewidth=2.4, markersize=6,
-         label="$\\Delta$ = real $-$ null (the cure, mean $\\pm$ SD over batches)")
+ax1.plot(contrast, delta_median, "-D", color=TEAL, linewidth=2.4, markersize=6,
+         label="$\\Delta$ = real $-$ null (median $\\pm$ SD over batches)")
 ax1.set_xlabel("smoothness contrast  $r_{smooth} - r_{rough}$  (self-gain difference)")
-ax1.set_ylabel("band-averaged dDTF, 0.2$-$1.0 Hz")
-ax1.set_title("Zero real coupling: a smoothness mismatch alone bends dDTF into a spurious\n"
-              "smooth$\\rightarrow$rough edge (smoother channel looks like the source).\n"
-              "The surrogate null reproduces it; $\\Delta$ removes it.",
-              fontsize=10.5)
+ax1.set_ylabel("band-averaged dDTF")
+##ax1.set_title("Zero real coupling: a smoothness mismatch alone bends dDTF into a spurious\n"
+#              "smooth$\\rightarrow$rough edge (smoother channel looks like the source).\n"
+#              "The surrogate null reproduces it; $\\Delta$ removes it.",
+#              fontsize=10.5)
 ax1.legend(frameon=False, fontsize=9, loc="upper left")
 ax1.spines[["top", "right"]].set_visible(False)
 fig1.tight_layout()
@@ -336,18 +341,18 @@ print("\nFigure 2: null-vs-real twin at high contrast "
 
 
 def panel_data(injected_gain):
-    """Real per-dyad values, pooled null, and mean Delta/z for one ground truth."""
+    """Real per-dyad values, pooled null, and median Delta/z for one ground truth."""
     dyads = simulate_dyads(R_SMOOTH_FIG2, injected_gain, N_DYADS_FIG2, BASE_SEED)
     reals = real_edge_values(dyads, EDGE_SMOOTH_TO_ROUGH)
     nulls = surrogate_null(dyads, EDGE_SMOOTH_TO_ROUGH)
     per_dyad = [delta_and_z(r, nulls) for r in reals]
-    return reals, nulls, np.mean([d["delta"] for d in per_dyad]), np.mean([d["z"] for d in per_dyad])
+    return reals, nulls, np.median([d["delta"] for d in per_dyad]), np.median([d["z"] for d in per_dyad])
 
 
 reals0, nulls0, delta0, z0 = panel_data(0.0)
 reals1, nulls1, delta1, z1 = panel_data(INJECTED_GAIN)
-print(f"  ground truth = 0 : mean Delta={delta0:+.5f}  mean z={z0:+.2f}")
-print(f"  ground truth > 0 : mean Delta={delta1:+.5f}  mean z={z1:+.2f}")
+print(f"  ground truth = 0 : median Delta={delta0:+.5f}  median z={z0:+.2f}")
+print(f"  ground truth > 0 : median Delta={delta1:+.5f}  median z={z1:+.2f}")
 
 fig2, axes = plt.subplots(1, 2, figsize=(11.5, 4.6), sharex=False)
 panels = [
@@ -358,13 +363,13 @@ panels = [
 ]
 for ax, reals, nulls, delta, z, title, note in panels:
     ax.hist(nulls, bins=18, color=GREY, edgecolor="white", label="surrogate null")
-    ax.axvline(nulls.mean(), color=AMBER, linewidth=2.2, linestyle="--", label="null mean")
+    ax.axvline(np.median(nulls), color=AMBER, linewidth=2.2, linestyle="--", label="null median")
     for i, value in enumerate(reals):
         ax.axvline(value, color=NAVY, alpha=0.75, linewidth=1.3,
                    label="real dyads" if i == 0 else None)
     ax.set_title(title, fontsize=10.5)
     ax.set_xlabel("band-averaged dDTF, smooth $\\rightarrow$ rough")
-    ax.annotate(f"mean $\\Delta$ = {delta:+.4f}\nmean z = {z:+.2f}\n{note}",
+    ax.annotate(f"median $\\Delta$ = {delta:+.4f}\nmedian z = {z:+.2f}\n{note}",
                 xy=(0.97, 0.97), xycoords="axes fraction", ha="right", va="top", fontsize=9,
                 bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor=TEAL))
     ax.legend(frameon=False, fontsize=8, loc="center right")
@@ -384,7 +389,7 @@ print(f"  wrote {fig2_path}")
 summary_rows = "".join(
     f"<tr><td>{r:.2f}</td><td>{r - R_ROUGH:+.2f}</td><td>{rm:.5f}</td>"
     f"<td>{nm:.5f}</td><td>{dm:+.5f}</td><td>{zm:+.2f}</td></tr>"
-    for r, rm, nm, dm, zm in zip(R_SMOOTH_GRID, real_mean, null_mean, delta_mean, delta_z_mean)
+    for r, rm, nm, dm, zm in zip(R_SMOOTH_GRID, real_median, null_median, delta_median, delta_z_median)
 )
 gate_html = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>Stage 0b - smoothness artifact</title>
@@ -413,7 +418,7 @@ not assumed.</div>
 <h2>Figure 2 &mdash; the null-vs-real twin on known ground truth</h2>
 <img src="fig2_null_twin.png" alt="null twin">
 <h2>Numbers</h2>
-<table><tr><th>r_smooth</th><th>contrast</th><th>real</th><th>null mean</th>
+<table><tr><th>r_smooth</th><th>contrast</th><th>real</th><th>null median</th>
 <th>&Delta;</th><th>z</th></tr>{summary_rows}</table>
 </body></html>"""
 gate_path = OUTPUT_DIR / "smoothness_artifact_gate.html"

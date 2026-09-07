@@ -185,7 +185,7 @@ def multivariate_spectra(signals, freqs, fs, max_model_order=20, optimal_model_o
         Multivariate spectra of shape (N_chan, N_chan, N_f).
     """
     if optimal_model_order is None:
-        _, _, optimal_model_order = mvar_criterion(signals, max_model_order, crit_type, True)
+        _, _, optimal_model_order = mvar_criterion(signals, max_model_order, crit_type, False)
         print('Optimal model order for all channels: p = ', str(optimal_model_order))
     else:
         print('Using provided model order: p = ', str(optimal_model_order))
@@ -196,7 +196,7 @@ def multivariate_spectra(signals, freqs, fs, max_model_order=20, optimal_model_o
     n_freqs = freqs.shape[0]
     spectra = np.zeros((n_chan, n_chan, n_freqs), dtype=np.complex128)  # initialize the multivariate spectrum
     for fi in range(n_freqs):  # compute spectrum for all channels
-        spectra[:, :, fi] = transfer_function_matrix[:, :, fi].dot(variance.dot(transfer_function_matrix[:, :, fi].T))
+        spectra[:, :, fi] = transfer_function_matrix[:, :, fi].dot(variance.dot(transfer_function_matrix[:, :, fi].conj().T))
 
     return spectra
 
@@ -609,13 +609,13 @@ def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title,
                 ax.plot(freqs, off_diag[i, j, :])
                 ax.fill_between(freqs, y, 0, color='skyblue', alpha=0.4)
                 ax.set_ylim([0, max_off_diag])
-                ax.set_yticks([0, max_off_diag // 2])
+                #ax.set_yticks([0, max_off_diag // 2])
             else:
                 y = np.real(on_diag[i, j, :])
                 ax.plot(freqs, y, color=[0.7, 0.7, 0.7])
                 ax.fill_between(freqs, y, 0, color=[0.7, 0.7, 0.7], alpha=0.4)
                 ax.set_ylim([0, max_on_diag])
-                ax.set_yticks([0, max_on_diag // 2])
+                #ax.set_yticks([0, max_on_diag // 2])
 
             # Set xtick and ytick labels only on leftmost and bottom plots
             ax.tick_params(labelleft=(j == 0), labelbottom=(i == n_chan - 1))
