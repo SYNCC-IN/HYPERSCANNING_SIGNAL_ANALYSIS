@@ -19,7 +19,7 @@ case:
    for the two HRV variables, whose within-film non-stationarity (drifting
    RSA centre frequency and variance) biases a single global fit.
 
-No ffDTF here -- that is Stage 4, which will reuse the identical detrended,
+No Granger_estimator here -- that is Stage 4, which will reuse the identical detrended,
 windowed 3-D representation with the explicit `p_used` this stage selects
 (`full_freq_dtf(stack, freqs, fs, optimal_model_order=p_used)`; never `None`
 on a 3-D stack -- see `DTF_analysis_notes/pipeline_plan.md` Stage 4).
@@ -29,8 +29,8 @@ cases, `03_mvar/stage03_manifest.csv`; a small window-choice sensitivity check
 on 1-2 dyads (gate-only, not written to per-dyad outputs); and a QC gate
 (`qc/*.png` figures + `mvar_order_gate.html`).
 
-Each case also gets one ffDTF/spectra grid figure (`src.mtmvar.mvar_plot`:
-off-diagonal panels = pairwise ffDTF, diagonal panels = auto power spectra),
+Each case also gets one Granger_estimator/spectra grid figure (`src.mtmvar.mvar_plot`:
+off-diagonal panels = pairwise Granger_estimator, diagonal panels = auto power spectra),
 fit at a fixed model order and window geometry (`GRID_MODEL_ORDER`,
 `GRID_WIN_LEN_S`/`GRID_OVERLAP_FRAC` below) independent of the per-case
 `p_used`/window selection above -- a fixed, comparable view across all cases.
@@ -59,7 +59,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.design import DESIGN_VARIABLES, assemble_design_matrix, detrend_windows, window_stack
 from src.io_utils import ensure_dir
-from src.mtmvar import ar_coeff, full_freq_dtf, multivariate_spectra, mvar_plot
+from src.mtmvar import ar_coeff, full_freq_dtf, multivariate_spectra, mvar_plot, direct_dtf, dtf_estimator
 from src.mvar_diag import ar_root_stability, fit_mvar_avg_acf, residual_whiteness, select_order
 
 # ---------------------------------------------------------------------------
@@ -90,11 +90,13 @@ DETREND_TYPE = "linear"
 RESIDUAL_ACF_MAX_LAG = 8   # must stay well below win_len - p_used
 MIN_WHITE_FRACTION = 0.8   # quality flag: per-variable fraction of lags within the Bartlett band
 
-# Per-case ffDTF/spectra grid figure (src.mtmvar.mvar_plot): fixed model order and
+# Per-case Granger_estimator/spectra grid figure (src.mtmvar.mvar_plot): fixed model order and
 # window geometry, independent of the p_used/window selected above, for a
 # comparable view across all cases.
+ESTIMATOR = "dDTF"  # or "ffDTF" for full-frequency DTF, "GPDC" for generalized partial directed coherence
+BOX_COX_LAMBDA = 0.25  # (x**lambda - 1) / lambda applied to the Granger_estimator cube; -1 = no transform (src.mtmvar.box_cox_transform)
 GRID_MODEL_ORDER = 4
-GRID_WIN_LEN_S = 10.0
+GRID_WIN_LEN_S = 15.0
 GRID_OVERLAP_FRAC = 0.5
 GRID_FREQS = np.linspace(0.02, TARGET_SFREQ / 2 - 0.02, 100)
 GRID_SCALE = "linear"
@@ -105,7 +107,7 @@ GRID_SCALE = "linear"
 SENSITIVITY_DYADS = [("W_030", "Peppa"), ("W_000", "Peppa")]
 SENSITIVITY_WINDOW_CONFIGS = [(10.0, 0.5), (15.0, 0.5), (10.0, 0.0)]
 SENSITIVITY_FREQS = np.linspace(0.02, TARGET_SFREQ / 2 - 0.02, 100)
-COUPLING_BAND_HZ = (0.2, 1.0)
+COUPLING_BAND_HZ = (0.15, 0.5)  # band-averaged Granger_estimator for the DV substrate
 PRIMARY_EDGES = [("cg:ROI", "child:ROI"), ("child:ROI", "cg:ROI"), ("cg:HRV", "child:HRV"), ("child:HRV", "cg:HRV")]
 
 
@@ -267,8 +269,8 @@ def plot_detrend_example(stack, stack_detrended, variable_names, win_len_s, coup
     return figure
 
 
-def plot_mvar_grid(design, model_order, win_len_s, overlap_frac, freqs, variable_names, title, scale="linear"):
-    """Grid of pairwise ffDTF (off-diagonal) and auto power spectra (diagonal).
+def plot_mvar_grid(design, model_order, win_len_s, overlap_frac, freqs, variable_names, title, scale="linear", ESTIMATOR="dDTF", box_cox_lambda=-1):
+    """Grid of pairwise Granger_estimator (off-diagonal) and auto power spectra (diagonal).
 
     Windows and detrends `design` at a fixed geometry and fits one
     windowed-ACF-averaged MVAR at a fixed model order -- independent of the
@@ -286,13 +288,18 @@ def plot_mvar_grid(design, model_order, win_len_s, overlap_frac, freqs, variable
     win_len_s, overlap_frac : float
         Fixed window geometry (seconds, fractional overlap).
     freqs : np.ndarray
-        Frequency axis (Hz) for the ffDTF/spectra grid.
+        Frequency axis (Hz) for the granger_estimator/spectra grid.
     variable_names : list of str
         Channel labels, in `design`'s row order (`src.design.DESIGN_VARIABLES`).
     title : str
         Figure title.
     scale : {'linear', 'sqrt', 'log'}, optional
         Amplitude scale passed to `mvar_plot`.
+    ESTIMATOR : {'dDTF', 'ffDTF', 'GPDC'}, optional
+        Estimator type for the directed transfer function calculation.
+    box_cox_lambda : float, optional
+        Box-Cox exponent applied to the granger_estimator cube (see
+        `src.mtmvar.box_cox_transform`). Default -1 = no transform.
 
     Returns
     -------
@@ -302,9 +309,9 @@ def plot_mvar_grid(design, model_order, win_len_s, overlap_frac, freqs, variable
     assert win_len > model_order, f"win_len={win_len} must exceed model_order={model_order}"
     stack = detrend_windows(window_stack(design, win_len, step), dtype=DETREND_TYPE)
     spectra = multivariate_spectra(stack, freqs, TARGET_SFREQ, optimal_model_order=model_order)
-    ffdtf = full_freq_dtf(stack, freqs, TARGET_SFREQ, optimal_model_order=model_order)
-    mvar_plot(spectra, ffdtf, freqs, x_label="from ", y_label="to ", chan_names=variable_names,
-              top_title=title, scale=scale, fig_size=(9, 9))
+    granger_estimator = dtf_estimator(stack, freqs, TARGET_SFREQ, optimal_model_order=model_order, ESTIMATOR=ESTIMATOR, box_cox_lambda=box_cox_lambda)
+    mvar_plot(spectra, granger_estimator, freqs, x_label="from ", y_label="to ", chan_names=variable_names,
+              top_title=title, scale=scale, fig_size=(9, 9), band_hz=COUPLING_BAND_HZ)
     return plt.gcf()
 
 
@@ -415,8 +422,8 @@ for nc_path in nc_paths:
 
     fig = plot_mvar_grid(
         design, GRID_MODEL_ORDER, GRID_WIN_LEN_S, GRID_OVERLAP_FRAC, GRID_FREQS, DESIGN_VARIABLES,
-        f"{case_title}: ffDTF grid (p={GRID_MODEL_ORDER}, window={GRID_WIN_LEN_S:g}s/{int(GRID_OVERLAP_FRAC * 100)}%)",
-        scale=GRID_SCALE,
+        f"{case_title}: {ESTIMATOR} grid (p={GRID_MODEL_ORDER}, window={GRID_WIN_LEN_S:g}s/{int(GRID_OVERLAP_FRAC * 100)}%)",
+        scale=GRID_SCALE, ESTIMATOR=ESTIMATOR, box_cox_lambda=BOX_COX_LAMBDA
     )
     mvar_grid_path = QC_DIR / f"{dyad_id}_{film}_mvar_grid.png"
     fig.savefig(mvar_grid_path)
@@ -473,8 +480,8 @@ for dyad_id, film in SENSITIVITY_DYADS:
         win_len, step = window_geometry(win_len_s, overlap_frac, TARGET_SFREQ)
         assert win_len > p_used, f"win_len={win_len} must exceed p_used={p_used} for sensitivity config {win_len_s}s"
         stack = detrend_windows(window_stack(design, win_len, step), dtype=DETREND_TYPE)
-        ffdtf = full_freq_dtf(stack, SENSITIVITY_FREQS, TARGET_SFREQ, optimal_model_order=p_used)
-        spectra_by_config[(win_len_s, overlap_frac)] = ffdtf
+        granger_estimator = dtf_estimator(stack, SENSITIVITY_FREQS, TARGET_SFREQ, optimal_model_order=p_used, ESTIMATOR=ESTIMATOR, box_cox_lambda=BOX_COX_LAMBDA)
+        spectra_by_config[(win_len_s, overlap_frac)] = granger_estimator
 
     band_mask = (SENSITIVITY_FREQS >= COUPLING_BAND_HZ[0]) & (SENSITIVITY_FREQS <= COUPLING_BAND_HZ[1])
 
@@ -483,19 +490,19 @@ for dyad_id, film in SENSITIVITY_DYADS:
     for edge_idx, (source_name, target_name) in enumerate(PRIMARY_EDGES):
         source, target = DESIGN_VARIABLES.index(source_name), DESIGN_VARIABLES.index(target_name)
         axis = axes.flat[edge_idx]
-        for config, ffdtf in spectra_by_config.items():
+        for config, granger_estimator in spectra_by_config.items():
             label = f"{config[0]:g}s/{int(config[1] * 100)}%"
-            axis.plot(SENSITIVITY_FREQS, ffdtf[target, source], label=label)
+            axis.plot(SENSITIVITY_FREQS, granger_estimator[target, source], label=label)
             band_table_rows.append({
                 "edge": f"{source_name} -> {target_name}", "window_config": label,
-                "band_avg_ffdtf": float(ffdtf[target, source][band_mask].mean()),
+                "band_avg_granger": float(granger_estimator[target, source][band_mask].mean()),
             })
         axis.axvspan(*COUPLING_BAND_HZ, color="grey", alpha=0.15)
         axis.set_title(f"{source_name} -> {target_name}", fontsize=9)
         axis.set_xlabel("Frequency (Hz)")
         axis.legend(fontsize=7)
-    axes[0, 0].set_ylabel("ffDTF")
-    axes[1, 0].set_ylabel("ffDTF")
+    axes[0, 0].set_ylabel(f"{ESTIMATOR} (Granger causality)")
+    axes[1, 0].set_ylabel(f"{ESTIMATOR} (Granger causality)")
     figure.suptitle(f"{dyad_id} {film}: window-choice sensitivity (p_used={p_used})")
     figure.tight_layout()
     sensitivity_plot_path = QC_DIR / f"{dyad_id}_{film}_sensitivity.png"
@@ -547,7 +554,7 @@ HTML_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <h1>Stage 3 windowed-MVAR gate</h1>
-<p>primary_crit=<b>__PRIMARY_CRIT__</b>, window=<b>__WIN_LEN_S__ s / __OVERLAP_PCT__% overlap</b>,
+<p>estimator=<b>__ESTIMATOR__</b> (box_cox_lambda=<b>__BOX_COX_LAMBDA__</b>, -1 = no transform), primary_crit=<b>__PRIMARY_CRIT__</b>, window=<b>__WIN_LEN_S__ s / __OVERLAP_PCT__% overlap</b>,
    detrend=<b>__DETREND_TYPE__</b>, min_white_fraction=__MIN_WHITE_FRACTION__.</p>
 <div id="summary">__SUMMARY__</div>
 <h2>Window-choice sensitivity</h2>
@@ -628,6 +635,8 @@ html = html.replace("__SUMMARY__", summary_text)
 html = html.replace("__SENSITIVITY_TEXT__", sensitivity_text)
 html = html.replace("__SENSITIVITY_IMAGES__", sensitivity_images)
 html = html.replace("__DYAD_IDS_JSON__", json.dumps(gate_dyad_ids))
+html = html.replace("__ESTIMATOR__", ESTIMATOR)
+html = html.replace("__BOX_COX_LAMBDA__", str(BOX_COX_LAMBDA))
 html = html.replace("__PRIMARY_CRIT__", PRIMARY_CRIT).replace("__WIN_LEN_S__", str(WIN_LEN_S))
 html = html.replace("__OVERLAP_PCT__", str(int(OVERLAP_FRAC * 100))).replace("__DETREND_TYPE__", DETREND_TYPE)
 html = html.replace("__MIN_WHITE_FRACTION__", str(MIN_WHITE_FRACTION))

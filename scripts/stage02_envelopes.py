@@ -95,7 +95,7 @@ QC_DIR = ensure_dir(OUTPUT_DIR / "qc")
 # ROI as config -- must match Stage 1's ROI_LABEL/ROI_CHANNELS, since
 # dyad_selection.json's roi_ok gate was computed for this ROI.
 ROI_LABEL = "temporo-parietal"
-ROI_CHANNELS = ["P7", "P8"]
+ROI_CHANNELS = [ "P7"] # select the right temporo-parietal channel as a proxy to right TPJ ("P7"- removed form ROI_CHANNELS list)
 BAND_ROI_LABEL = ROI_LABEL  # row to read from band_assignments.csv
 
 FILMS = ["Peppa", "Incredibles", "Brave"]
@@ -229,13 +229,13 @@ def plot_continuous_psd_band(raw_avg, sfreq, fast_cf, fast_bw, title):
     matplotlib.figure.Figure
     """
     freqs, psd = compute_psd_multitaper(raw_avg[np.newaxis, :], sfreq, fmin=1.0, fmax=20.0, bandwidth=1.0)
-    figure, axis = plt.subplots()
+    figure, axis = plt.subplots(figsize=(3, 3), dpi=100)
     axis.plot(freqs, psd[0])
     axis.axvspan(fast_cf - fast_bw, fast_cf + fast_bw, color="orange", alpha=0.3, label="individual fast band")
     axis.set_xlabel("Frequency (Hz)")
     axis.set_ylabel("PSD")
     axis.set_title(title)
-    axis.legend()
+    #axis.legend()
     figure.tight_layout()
     return figure
 
@@ -268,7 +268,7 @@ def plot_continuous_overlay(role_continuous, films_windows, title):
         ("child", "hrv_signal", "hrv_signal_sfreq", "hrv_t0", "child:HRV"),
         ("caregiver", "hrv_signal", "hrv_signal_sfreq", "hrv_t0", "cg:HRV"),
     ]
-    figure, axes = plt.subplots(nrows=len(rows), sharex=True, figsize=(10, 9))
+    figure, axes = plt.subplots(nrows=len(rows), sharex=True, figsize=(10, 9), dpi=100)
     for axis, (role, signal_key, sfreq_key, t0_key, label) in zip(axes, rows):
         rc = role_continuous[role]
         time = rc[t0_key] + np.arange(rc[signal_key].size) / rc[sfreq_key]
@@ -337,7 +337,7 @@ included_dyad_meta = []
 for dyad_id in INCLUDED_DYADS:
     eeg_files = participant_files[participant_files["dyad_id"] == dyad_id]
     dyad = assemble_dyad(dyad_id, eeg_files, IBI_ROOT, ROI_CHANNELS)
-
+    print(f"Stage 2: {dyad_id} {dyad['group']} {dyad['meta']['age_months']} months" )
     role_continuous = {}
     for role in ROLES:
         fast_cf, fast_bw = band_lookup(dyad_id, role)

@@ -215,11 +215,11 @@ def plot_signal_filtered_envelope(raw, filtered, envelope, sfreq, title):
         Figure containing the sanity plot.
     """
     time = np.arange(raw.size) / sfreq
-    figure, axes = plt.subplots(nrows=2, sharex=True)
-    axes[0].plot(time, raw)
+    figure, axes = plt.subplots(nrows=2, sharex=True, figsize=(7, 5), dpi=100)
+    axes[0].plot(time, raw,linewidth=0.3)
     axes[0].set_ylabel("Raw amplitude")
-    axes[1].plot(time, filtered, label="Filtered")
-    axes[1].plot(time, envelope, label="Envelope")
+    axes[1].plot(time, filtered, label="Filtered", linewidth=0.3)
+    axes[1].plot(time, envelope, label="Envelope", linewidth=1)
     axes[1].set_xlabel("Time (s)")
     axes[1].set_ylabel("Amplitude")
     axes[1].legend()
@@ -251,7 +251,7 @@ def plot_dyad_envelopes(env_child, env_caregiver, sfreq, title, labels):
     """
     child_time = np.arange(env_child.size) / sfreq
     caregiver_time = np.arange(env_caregiver.size) / sfreq
-    figure, axis = plt.subplots()
+    figure, axis = plt.subplots(figsize=(8, 4), dpi=100)
     axis.plot(child_time, env_child, label=labels[0])
     axis.plot(caregiver_time, env_caregiver, label=labels[1])
     axis.set_xlabel("Time (s)")
@@ -285,7 +285,7 @@ def plot_eeg_hrv_envelopes(env_eeg, eeg_sfreq, env_hrv, hrv_sfreq, title):
     """
     eeg_time = np.arange(env_eeg.size) / eeg_sfreq
     hrv_time = np.arange(env_hrv.size) / hrv_sfreq
-    figure, axes = plt.subplots(nrows=2, sharex=True)
+    figure, axes = plt.subplots(nrows=2, sharex=True, figsize=(10, 6), dpi=100)
     axes[0].plot(eeg_time, env_eeg)
     axes[0].set_ylabel("EEG amplitude")
     axes[1].plot(hrv_time, env_hrv)

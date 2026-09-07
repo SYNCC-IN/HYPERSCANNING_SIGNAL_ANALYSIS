@@ -200,6 +200,68 @@ def multivariate_spectra(signals, freqs, fs, max_model_order=20, optimal_model_o
 
     return spectra
 
+def box_cox_transform(x, box_cox_lambda):
+    """Elementwise Box-Cox power transform, `(x**box_cox_lambda - 1) / box_cox_lambda`.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Non-negative array to transform (e.g. a Granger/DTF connectivity cube).
+    box_cox_lambda : float
+        Box-Cox exponent. `-1` is the sentinel for "no transform" (returns `x`
+        unchanged) -- deliberately distinct from the mathematically valid
+        `box_cox_lambda=1` (a pure shift, `x - 1`), so callers can request a
+        no-op pass-through explicitly and keep prior behaviour by default.
+        Any other value applies the transform as-is; `box_cox_lambda=0` is a
+        singularity of the formula (division by zero) and is not special-cased
+        to the log(x) limit -- left to surface as a real error.
+
+    Returns
+    -------
+    np.ndarray
+        `x` unchanged if `box_cox_lambda == -1`, else the transformed array.
+    """
+    if box_cox_lambda == -1:
+        return x
+    return (x ** box_cox_lambda - 1) / box_cox_lambda
+
+
+def dtf_estimator(signals, freqs, fs, max_model_order=20, optimal_model_order=None, crit_type='AIC', ESTIMATOR="dDTF", box_cox_lambda=-1):
+    """
+    Select and compute the directed transfer function (DTF) or its variants for the multivariate case.
+
+    Parameters:
+    signals : np.ndarray
+        Input signals of shape (N_chan, N_samp).
+    freqs : np.ndarray
+        Frequency vector.
+    fs : float
+        Sampling frequency.
+    max_model_order : int
+        Maximum model order.
+    optimal_model_order : int or None
+        Optimal model order. If None, it will be computed.
+    crit_type : str
+        Criterion type for model order selection.
+    ESTIMATOR : {'dDTF', 'ffDTF', 'GPDC'}, optional
+        Estimator type for the directed transfer function calculation (default is "dDTF").
+    box_cox_lambda : float, optional
+        Box-Cox exponent applied to the returned cube via `box_cox_transform`
+        (default -1 = no transform, preserving prior behaviour).
+
+    Returns:
+    np.ndarray
+        Multivariate DTF (or its variant) of shape (N_chan, N_chan, N_f).
+    """
+    if ESTIMATOR == "dDTF":
+        result = direct_dtf(signals, freqs, fs, max_model_order, optimal_model_order, crit_type)
+    elif ESTIMATOR == "ffDTF":
+        result = full_freq_dtf(signals, freqs, fs, max_model_order, optimal_model_order, crit_type)
+    elif ESTIMATOR == "GPDC":
+        result = gen_partial_directed_coherence(signals, freqs, fs, max_model_order, optimal_model_order, crit_type)
+    else:
+        raise ValueError(f"Unknown ESTIMATOR: {ESTIMATOR}")
+    return box_cox_transform(result, box_cox_lambda)
 
 def dtf_multivariate(signals, freqs, fs, max_model_order=20, optimal_model_order=None, crit_type='AIC', comment=None):
     """
@@ -469,7 +531,8 @@ def gen_partial_directed_coherence(signals, freqs, fs, max_model_order=20, optim
 
 
 # Plotting function for graph visualization
-def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title, scale='linear', fig_size=(8, 8)):
+def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title, scale='linear', fig_size=(8, 8),
+              band_hz=None, fig=None, max_on_diag=None, max_off_diag=None):
     """
     Plot MVAR results using bar plots for diagonal (auto) and off-diagonal (cross) terms.
 
@@ -491,7 +554,21 @@ def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title,
     scale : str
         'linear', 'sqrt', or 'log'
     fig_size : tuple of int, optional
-        Figure size (width, height). Default is (8, 8).
+        Figure size (width, height). Ignored when `fig` is given. Default is (8, 8).
+    band_hz : tuple of float, optional
+        `(low, high)` frequency band edges in Hz. When given, shaded as a
+        background span behind every subplot to mark a coupling band of
+        interest. Default None (no shading).
+    fig : matplotlib.figure.Figure or matplotlib.figure.SubFigure, optional
+        Draw the n_chan x n_chan grid into this figure (or subfigure) instead
+        of creating a new standalone figure -- lets a caller embed this plot
+        as one panel of a larger composite figure (e.g. via
+        `fig.subfigures(...)`). Default None creates a new figure via
+        `plt.subplots(..., figsize=fig_size)`, the original behaviour.
+    max_on_diag : float, optional
+        Maximum value for the on-diagonal plots. Default is None, which uses the actual max.
+    max_off_diag : float, optional
+        Maximum value for the off-diagonal plots. Default is None, which uses the actual max.
     """
     on_diag = np.abs(on_diag)
     off_diag = np.abs(off_diag)
@@ -513,15 +590,20 @@ def mvar_plot(on_diag, off_diag, freqs, x_label, y_label, chan_names, top_title,
             else:
                 off_diag[i, i, :] = 0
 
-    max_on_diag = np.max(on_diag)
-    max_off_diag = np.max(off_diag)
+    max_on_diag = np.max(on_diag) if max_on_diag is None else max_on_diag
+    max_off_diag = np.max(off_diag) if max_off_diag is None else max_off_diag # we want to have the same scale for all plots, so we can set max_val to a fixed value if desired
 
-    _, axs = plt.subplots(n_chan, n_chan, figsize=fig_size,
-                          gridspec_kw={'wspace': 0, 'hspace': 0})
+    if fig is None:
+        _, axs = plt.subplots(n_chan, n_chan, figsize=fig_size,
+                              gridspec_kw={'wspace': 0, 'hspace': 0})
+    else:
+        axs = fig.subplots(n_chan, n_chan, gridspec_kw={'wspace': 0, 'hspace': 0})
 
     for i in range(n_chan):
         for j in range(n_chan):
             ax = axs[i, j] if n_chan > 1 else axs
+            if band_hz is not None:
+                ax.axvspan(band_hz[0], band_hz[1], color='orange', alpha=0.2, zorder=0, lw=0)
             if i != j:
                 y = np.real(off_diag[i, j, :])
                 ax.plot(freqs, off_diag[i, j, :])
